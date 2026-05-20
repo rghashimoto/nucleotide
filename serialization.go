@@ -17,8 +17,8 @@ type GenomeData struct {
 	Genes []LocusGenePair `json:"genes"`
 }
 
-// SaveGenome saves a CategoricalGenome's gene IDs to a JSON file.
-func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
+// EncodeGenome encodes a CategoricalGenome's gene IDs into a JSON byte slice.
+func EncodeGenome[E any](g *CategoricalGenome[E]) ([]byte, error) {
 	data := GenomeData{
 		Genes: make([]LocusGenePair, len(g.GeneIndices)),
 	}
@@ -26,7 +26,7 @@ func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
 	for i, geneIdx := range g.GeneIndices {
 		locus := g.Definition.Loci[i]
 		if geneIdx < 0 || geneIdx >= len(locus.PossibleGenes) {
-			return fmt.Errorf("invalid gene index %d for locus %s", geneIdx, locus.ID)
+			return nil, fmt.Errorf("invalid gene index %d for locus %s", geneIdx, locus.ID)
 		}
 		data.Genes[i] = LocusGenePair{
 			LocusID: locus.ID,
@@ -34,39 +34,28 @@ func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
 		}
 	}
 
-	bytes, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filename, bytes, 0644)
+	return json.MarshalIndent(data, "", "  ")
 }
 
-// LoadGenome loads gene IDs from a JSON file and maps them to indices in the provided Definition.
-func LoadGenome[E any](def *Definition[E], filename string) (*CategoricalGenome[E], error) {
-	bytes, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-	var data GenomeData
-	if err := json.Unmarshal(bytes, &data); err != nil {
+// DecodeGenome decodes gene IDs from a JSON byte slice and maps them to indices in the provided Definition.
+func DecodeGenome[E any](def *Definition[E], data []byte) (*CategoricalGenome[E], error) {
+	var gData GenomeData
+	if err := json.Unmarshal(data, &gData); err != nil {
 		return nil, err
 	}
 
 	indices := make([]int, len(def.Loci))
-	// Create a map for faster lookup if needed, but for small genomes O(N*M) is fine.
-	// We'll use a map of LocusID -> GeneID from the file.
 	fileGenes := make(map[string]string)
-	for _, pair := range data.Genes {
+	for _, pair := range gData.Genes {
 		fileGenes[pair.LocusID] = pair.GeneID
 	}
 
 	for i, locus := range def.Loci {
 		geneID, ok := fileGenes[locus.ID]
 		if !ok {
-			return nil, fmt.Errorf("locus %s not found in file", locus.ID)
+			return nil, fmt.Errorf("locus %s not found in data", locus.ID)
 		}
 
-		// Find the index of the geneID in this locus
 		found := false
 		for j, gene := range locus.PossibleGenes {
 			if gene.ID == geneID {
@@ -84,4 +73,22 @@ func LoadGenome[E any](def *Definition[E], filename string) (*CategoricalGenome[
 		Definition:  def,
 		GeneIndices: indices,
 	}, nil
+}
+
+// SaveGenome saves a CategoricalGenome's gene IDs to a JSON file.
+func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
+	bytes, err := EncodeGenome(g)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, bytes, 0644)
+}
+
+// LoadGenome loads gene IDs from a JSON file and maps them to indices in the provided Definition.
+func LoadGenome[E any](def *Definition[E], filename string) (*CategoricalGenome[E], error) {
+	bytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	return DecodeGenome(def, bytes)
 }

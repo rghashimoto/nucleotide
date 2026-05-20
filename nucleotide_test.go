@@ -209,3 +209,27 @@ func TestExpress_Cancellation(t *testing.T) {
 		t.Errorf("Express did not respect cancellation: executed %d genes", count)
 	}
 }
+func TestMemorySerialization(t *testing.T) {
+	def := NewDefinition[TestEnv]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv]) {})
+	
+	g := &CategoricalGenome[TestEnv]{
+		Definition:  def,
+		GeneIndices: []int{0, 0},
+	}
+	
+	bytes, err := EncodeGenome(g)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+	
+	loaded, err := DecodeGenome(def, bytes)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+	
+	if loaded.GeneIndices[1] != g.GeneIndices[1] {
+		t.Errorf("Mismatch after decode")
+	}
+}

@@ -2,7 +2,9 @@ package nucleotide
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"os"
 )
 
 // Individual represents a candidate solution in the population.
@@ -108,12 +110,21 @@ func (ind *Individual[E]) Express(ctx context.Context, env E) {
 	}
 }
 
+// ToJSON encodes the individual's genome to a JSON byte slice.
+func (ind *Individual[E]) ToJSON() ([]byte, error) {
+	if cg, ok := ind.Genome.(*CategoricalGenome[E]); ok {
+		return EncodeGenome(cg)
+	}
+	return nil, fmt.Errorf("individual genome is not categorical")
+}
+
 // Save saves the individual's genome to a JSON file.
 func (ind *Individual[E]) Save(filename string) error {
-	if cg, ok := ind.Genome.(*CategoricalGenome[E]); ok {
-		return SaveGenome(cg, filename)
+	bytes, err := ind.ToJSON()
+	if err != nil {
+		return err
 	}
-	return nil
+	return os.WriteFile(filename, bytes, 0644)
 }
 
 // Population is a collection of individuals.
