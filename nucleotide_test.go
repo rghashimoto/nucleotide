@@ -2,7 +2,6 @@ package nucleotide
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"testing"
 )
@@ -155,7 +154,7 @@ func TestSerialization_Robust(t *testing.T) {
 	}
 	
 	// Verify JSON content uses IDs
-	content, _ := ioutil.ReadFile(filename)
+	content, _ := os.ReadFile(filename)
 	if !contains(string(content), "Execution Order") || !contains(string(content), "G2") {
 		t.Errorf("JSON does not contain expected IDs: %s", string(content))
 	}

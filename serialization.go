@@ -3,7 +3,7 @@ package nucleotide
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"os"
 )
 
 // LocusGenePair maps a Locus ID to a selected Gene ID.
@@ -38,12 +38,12 @@ func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(filename, bytes, 0644)
+	return os.WriteFile(filename, bytes, 0644)
 }
 
 // LoadGenome loads gene IDs from a JSON file and maps them to indices in the provided Definition.
 func LoadGenome[E any](def *Definition[E], filename string) (*CategoricalGenome[E], error) {
-	bytes, err := ioutil.ReadFile(filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
