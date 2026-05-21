@@ -78,12 +78,15 @@ func main() {
 		MaxGenerations: 5,
 		FitnessFunc:    fitnessFunc,
 		Selector:       nucleotide.GenericTournamentSelector[*World, AgentState]{Size: 3},
-		Crossoverer:    nucleotide.SinglePointCrossover{},
-		Mutator:        nucleotide.CategoricalMutator{Probability: 0.1},
+		Crossoverers:   []nucleotide.Crossoverer{nucleotide.SinglePointCrossover{}},
+		Mutators:       []nucleotide.Mutator{nucleotide.CategoricalMutator{Probability: 0.1}},
 		Elitism:        1,
 		Env:            &World{FoodAvailable: 10},
 	}
-	engine := nucleotide.NewEngine[*World, AgentState](config)
+	engine, err := nucleotide.NewEngine[*World, AgentState](config)
+	if err != nil {
+		panic(err)
+	}
 
 	// 4. Run evolution
 	best, _ := engine.Run(def)

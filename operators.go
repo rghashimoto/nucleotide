@@ -1,7 +1,9 @@
 package nucleotide
 
 import (
+	"math"
 	"math/rand"
+	"sort"
 )
 
 // Selector defines the interface for selecting individuals from a population.
@@ -40,6 +42,110 @@ func (s TournamentSelector) Select(pop interface{}) interface{} {
 // GenericTournamentSelector is a type-safe selector for a specific environment E and state S.
 type GenericTournamentSelector[E any, S any] struct {
 	Size int
+
+	// Probabilistic Selection
+	Probability float64 // If > 0 and < 1.0, active. Best competitor has chance P, next has P*(1-P), etc.
+
+	// Adaptive Selection
+	MinSize            int
+	MaxSize            int
+	GenerationProgress func() float64 // Function returning fraction [0.0, 1.0] representing run progress.
+
+	// Niching / Local Fitness Sharing
+	SigmaShare   float64                     // Niching niche radius (active if > 0)
+	NichingAlpha float64                     // Sharing power factor (defaults to 1.0 if <= 0)
+	DistanceFunc func(g1, g2 Genome) float64 // Optional custom distance metric.
+
+	// Unique Tournament
+	Unique bool // If true, selects competitors without replacement.
+}
+
+// NewProbabilisticTournamentSelector creates a tournament selector with selection probability controls.
+func NewProbabilisticTournamentSelector[E any, S any](size int, probability float64) GenericTournamentSelector[E, S] {
+	return GenericTournamentSelector[E, S]{
+		Size:        size,
+		Probability: probability,
+	}
+}
+
+// NewAdaptiveTournamentSelector creates a selector that dynamically scales tournament size.
+func NewAdaptiveTournamentSelector[E any, S any](minSize, maxSize int, progressFunc func() float64) GenericTournamentSelector[E, S] {
+	return GenericTournamentSelector[E, S]{
+		MinSize:            minSize,
+		MaxSize:            maxSize,
+		GenerationProgress: progressFunc,
+	}
+}
+
+// NewNichingTournamentSelector creates a selector that applies local fitness sharing within tournaments.
+func NewNichingTournamentSelector[E any, S any](size int, sigma float64, distFunc func(g1, g2 Genome) float64) GenericTournamentSelector[E, S] {
+	return GenericTournamentSelector[E, S]{
+		Size:         size,
+		SigmaShare:   sigma,
+		DistanceFunc: distFunc,
+	}
+}
+
+// NewUniqueTournamentSelector creates a selector that draws tournament competitors without replacement.
+func NewUniqueTournamentSelector[E any, S any](size int) GenericTournamentSelector[E, S] {
+	return GenericTournamentSelector[E, S]{
+		Size:   size,
+		Unique: true,
+	}
+}
+
+func defaultGenomeDistance(g1, g2 Genome) float64 {
+	switch genome1 := g1.(type) {
+	case BitGenome:
+		if genome2, ok := g2.(BitGenome); ok {
+			diff := 0
+			sz := genome1.Size()
+			if sz == 0 {
+				return 0
+			}
+			for i := 0; i < sz; i++ {
+				if genome1[i] != genome2[i] {
+					diff++
+				}
+			}
+			return float64(diff) / float64(sz)
+		}
+	case FloatGenome:
+		if genome2, ok := g2.(FloatGenome); ok {
+			sz := genome1.Size()
+			if sz == 0 {
+				return 0
+			}
+			sum := 0.0
+			for i := 0; i < sz; i++ {
+				diff := genome1[i] - genome2[i]
+				sum += diff * diff
+			}
+			return math.Sqrt(sum / float64(sz))
+		}
+	default:
+		type indexedGenome interface {
+			GetIndices() []int
+		}
+		if ig1, ok := g1.(indexedGenome); ok {
+			if ig2, ok := g2.(indexedGenome); ok {
+				indices1 := ig1.GetIndices()
+				indices2 := ig2.GetIndices()
+				sz := len(indices1)
+				if sz == 0 {
+					return 0
+				}
+				diff := 0
+				for i := 0; i < sz; i++ {
+					if indices1[i] != indices2[i] {
+						diff++
+					}
+				}
+				return float64(diff) / float64(sz)
+			}
+		}
+	}
+	return 0.0
 }
 
 func (s GenericTournamentSelector[E, S]) Select(pop interface{}) interface{} {
@@ -47,14 +153,104 @@ func (s GenericTournamentSelector[E, S]) Select(pop interface{}) interface{} {
 }
 
 func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
-	if len(pop) == 0 {
+	n := len(pop)
+	if n == 0 {
 		return nil
 	}
-	tournament := make(Population[E, S], s.Size)
-	for i := 0; i < s.Size; i++ {
-		tournament[i] = pop[rand.Intn(len(pop))]
+
+	// 1. Determine effective size (Adaptive Tournament Support)
+	size := s.Size
+	if s.GenerationProgress != nil && s.MinSize > 0 && s.MaxSize > 0 {
+		progress := s.GenerationProgress()
+		if progress < 0 {
+			progress = 0
+		}
+		if progress > 1 {
+			progress = 1
+		}
+		size = int(float64(s.MinSize) + progress*float64(s.MaxSize-s.MinSize))
 	}
-	return tournament.Best()
+	if size < 1 {
+		size = 1
+	}
+	if size > n {
+		size = n
+	}
+
+	// 2. Sample competitors (Unique Tournament Support)
+	tournament := make(Population[E, S], size)
+	if s.Unique {
+		selectedIndices := make(map[int]bool)
+		for i := 0; i < size; i++ {
+			for {
+				idx := rand.Intn(n)
+				if !selectedIndices[idx] {
+					selectedIndices[idx] = true
+					tournament[i] = pop[idx]
+					break
+				}
+			}
+		}
+	} else {
+		for i := 0; i < size; i++ {
+			tournament[i] = pop[rand.Intn(n)]
+		}
+	}
+
+	// 3. Fitness Sharing / Niching
+	type ratedCompetitor struct {
+		ind         *Individual[E, S]
+		originalFit float64
+		adjustedFit float64
+	}
+	competitors := make([]ratedCompetitor, size)
+	for i, ind := range tournament {
+		competitors[i] = ratedCompetitor{
+			ind:         ind,
+			originalFit: ind.Fitness,
+			adjustedFit: ind.Fitness,
+		}
+	}
+
+	if s.SigmaShare > 0 {
+		alpha := s.NichingAlpha
+		if alpha <= 0 {
+			alpha = 1.0
+		}
+		distFunc := s.DistanceFunc
+		if distFunc == nil {
+			distFunc = defaultGenomeDistance
+		}
+
+		for i := 0; i < size; i++ {
+			nicheCount := 0.0
+			for j := 0; j < size; j++ {
+				dist := distFunc(competitors[i].ind.Genome, competitors[j].ind.Genome)
+				if dist < s.SigmaShare {
+					nicheCount += 1.0 - math.Pow(dist/s.SigmaShare, alpha)
+				}
+			}
+			if nicheCount > 0 {
+				competitors[i].adjustedFit = competitors[i].originalFit / nicheCount
+			}
+		}
+	}
+
+	// 4. Selection (Probabilistic Selection Support)
+	sort.Slice(competitors, func(i, j int) bool {
+		return competitors[i].adjustedFit > competitors[j].adjustedFit
+	})
+
+	if s.Probability > 0 && s.Probability < 1.0 {
+		for i := 0; i < size; i++ {
+			if rand.Float64() < s.Probability {
+				return competitors[i].ind
+			}
+		}
+		return competitors[size-1].ind
+	}
+
+	return competitors[0].ind
 }
 
 // SinglePointCrossover performs crossover at a single random point.
@@ -384,4 +580,36 @@ func (m CategoricalCreepMutator) Mutate(g Genome) Genome {
 		return newG
 	}
 	return g
+}
+
+// DefaultCrossoverer performs dynamic fallback crossover based on genome type.
+type DefaultCrossoverer struct{}
+
+func (c DefaultCrossoverer) Crossover(p1, p2 Genome) (Genome, Genome) {
+	switch p1.(type) {
+	case FloatGenome:
+		return ArithmeticCrossover{Alpha: 0.5}.Crossover(p1, p2)
+	default:
+		return SinglePointCrossover{}.Crossover(p1, p2)
+	}
+}
+
+// DefaultMutator performs dynamic fallback mutation based on genome type.
+type DefaultMutator struct {
+	Probability float64
+}
+
+func (m DefaultMutator) Mutate(g Genome) Genome {
+	prob := m.Probability
+	if prob <= 0 {
+		prob = 0.1
+	}
+	switch genome := g.(type) {
+	case BitGenome:
+		return BitFlipMutator{Probability: prob}.Mutate(genome)
+	case FloatGenome:
+		return GaussianMutator{Probability: prob, StdDev: 0.1}.Mutate(genome)
+	default:
+		return CategoricalMutator{Probability: prob}.Mutate(genome)
+	}
 }

@@ -2,6 +2,7 @@ package nucleotide
 
 import (
 	"fmt"
+	"math/rand"
 	"sort"
 )
 
@@ -44,36 +45,156 @@ func TopNElitism[E any, S any](pop Population[E, S], size int) Population[E, S] 
 
 // EngineConfig holds the configuration for the evolution engine.
 type EngineConfig[E any, S any] struct {
-	PopulationSize int
-	MaxGenerations int
-	FitnessFunc    FitnessFunc[E, S]
-	Selector       Selector
-	Crossoverer    Crossoverer
-	Mutator        Mutator
-	Elitism        int
-	ElitismFunc    ElitismFunc[E, S]
-	PopulationFunc PopulationFunc[E, S] // User can provide their own
-	Env            E
+	PopulationSize     int
+	MaxGenerations     int
+	FitnessFunc        FitnessFunc[E, S]
+	Selector           Selector
+	Crossoverers       []Crossoverer
+	Mutators           []Mutator
+	CrossovererWeights []float64
+	MutatorWeights     []float64
+	Elitism            int
+	ElitismFunc        ElitismFunc[E, S]
+	PopulationFunc     PopulationFunc[E, S] // User can provide their own
+	Env                E
 }
 
 // Engine orchestrates the genetic algorithm process.
 type Engine[E any, S any] struct {
-	Config     EngineConfig[E, S]
-	Population Population[E, S]
-	Generation int
+	Config       EngineConfig[E, S]
+	Population   Population[E, S]
+	Generation   int
+	crossoverIdx int
+	mutatorIdx   int
 }
 
-// NewEngine creates a new evolution engine.
-func NewEngine[E any, S any](config EngineConfig[E, S]) *Engine[E, S] {
+// NewEngine creates a new evolution engine and performs validation.
+func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
+	if config.FitnessFunc == nil {
+		return nil, fmt.Errorf("FitnessFunc must be defined in EngineConfig")
+	}
+
+	// Default Selector fallback
+	if config.Selector == nil {
+		config.Selector = GenericTournamentSelector[E, S]{Size: 3}
+	}
+
+	// Default Crossoverer fallback
+	if len(config.Crossoverers) == 0 {
+		config.Crossoverers = []Crossoverer{DefaultCrossoverer{}}
+	}
+
+	// Default Mutator fallback
+	if len(config.Mutators) == 0 {
+		config.Mutators = []Mutator{DefaultMutator{}}
+	}
+
+	// Validate CrossovererWeights
+	if len(config.CrossovererWeights) > 0 {
+		if len(config.CrossovererWeights) != len(config.Crossoverers) {
+			return nil, fmt.Errorf("CrossovererWeights size (%d) must match Crossoverers size (%d)", len(config.CrossovererWeights), len(config.Crossoverers))
+		}
+		sum := 0.0
+		for _, w := range config.CrossovererWeights {
+			if w < 0 {
+				return nil, fmt.Errorf("CrossovererWeights must not contain negative values")
+			}
+			sum += w
+		}
+		if sum == 0 {
+			return nil, fmt.Errorf("sum of CrossovererWeights must be greater than zero")
+		}
+	}
+
+	// Validate MutatorWeights
+	if len(config.MutatorWeights) > 0 {
+		if len(config.MutatorWeights) != len(config.Mutators) {
+			return nil, fmt.Errorf("MutatorWeights size (%d) must match Mutators size (%d)", len(config.MutatorWeights), len(config.Mutators))
+		}
+		sum := 0.0
+		for _, w := range config.MutatorWeights {
+			if w < 0 {
+				return nil, fmt.Errorf("MutatorWeights must not contain negative values")
+			}
+			sum += w
+		}
+		if sum == 0 {
+			return nil, fmt.Errorf("sum of MutatorWeights must be greater than zero")
+		}
+	}
+
 	if config.ElitismFunc == nil && config.Elitism > 0 {
 		config.ElitismFunc = BestIndividualElitism[E, S]
 	}
 	if config.PopulationFunc == nil {
 		config.PopulationFunc = DefaultPopulationFunc[E, S]
 	}
+
 	return &Engine[E, S]{
 		Config: config,
+	}, nil
+}
+
+func (e *Engine[E, S]) selectCrossoverer() Crossoverer {
+	n := len(e.Config.Crossoverers)
+	if n == 0 {
+		return DefaultCrossoverer{}
 	}
+	if n == 1 {
+		return e.Config.Crossoverers[0]
+	}
+
+	if len(e.Config.CrossovererWeights) > 0 {
+		totalWeight := 0.0
+		for _, w := range e.Config.CrossovererWeights {
+			totalWeight += w
+		}
+		r := rand.Float64() * totalWeight
+		cumulative := 0.0
+		for i, w := range e.Config.CrossovererWeights {
+			cumulative += w
+			if r <= cumulative {
+				return e.Config.Crossoverers[i]
+			}
+		}
+		return e.Config.Crossoverers[n-1]
+	}
+
+	// Round-robin selection
+	idx := e.crossoverIdx
+	e.crossoverIdx = (e.crossoverIdx + 1) % n
+	return e.Config.Crossoverers[idx]
+}
+
+func (e *Engine[E, S]) selectMutator() Mutator {
+	n := len(e.Config.Mutators)
+	if n == 0 {
+		return DefaultMutator{}
+	}
+	if n == 1 {
+		return e.Config.Mutators[0]
+	}
+
+	if len(e.Config.MutatorWeights) > 0 {
+		totalWeight := 0.0
+		for _, w := range e.Config.MutatorWeights {
+			totalWeight += w
+		}
+		r := rand.Float64() * totalWeight
+		cumulative := 0.0
+		for i, w := range e.Config.MutatorWeights {
+			cumulative += w
+			if r <= cumulative {
+				return e.Config.Mutators[i]
+			}
+		}
+		return e.Config.Mutators[n-1]
+	}
+
+	// Round-robin selection
+	idx := e.mutatorIdx
+	e.mutatorIdx = (e.mutatorIdx + 1) % n
+	return e.Config.Mutators[idx]
 }
 
 // Run executes the genetic algorithm. It uses the provided definition to initialize the population if not already set.
@@ -103,10 +224,14 @@ func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
 			p1 := e.Config.Selector.Select(e.Population).(*Individual[E, S])
 			p2 := e.Config.Selector.Select(e.Population).(*Individual[E, S])
 
-			off1G, off2G := e.Config.Crossoverer.Crossover(p1.Genome, p2.Genome)
+			cross := e.selectCrossoverer()
+			mut1 := e.selectMutator()
+			mut2 := e.selectMutator()
 
-			off1G = e.Config.Mutator.Mutate(off1G)
-			off2G = e.Config.Mutator.Mutate(off2G)
+			off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+
+			off1G = mut1.Mutate(off1G)
+			off2G = mut2.Mutate(off2G)
 
 			newPop = append(newPop, NewIndividual[E, S](off1G))
 			if len(newPop) < e.Config.PopulationSize {

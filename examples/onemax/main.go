@@ -39,12 +39,15 @@ func main() {
 		MaxGenerations: maxGens,
 		FitnessFunc:    fitnessFunc,
 		Selector:       nucleotide.GenericTournamentSelector[EmptyEnv, struct{}]{Size: 3},
-		Crossoverer:    nucleotide.SinglePointCrossover{},
-		Mutator:        nucleotide.BitFlipMutator{Probability: 0.01},
+		Crossoverers:   []nucleotide.Crossoverer{nucleotide.SinglePointCrossover{}},
+		Mutators:       []nucleotide.Mutator{nucleotide.BitFlipMutator{Probability: 0.01}},
 		Elitism:        1,
 		Env:            EmptyEnv{},
 	}
-	engine := nucleotide.NewEngine[EmptyEnv, struct{}](config)
+	engine, err := nucleotide.NewEngine[EmptyEnv, struct{}](config)
+	if err != nil {
+		panic(err)
+	}
 	engine.Population = initialPop
 
 	best, _ := engine.Run(nil)

@@ -2,6 +2,7 @@ package nucleotide
 
 import (
 	"context"
+	"math/rand"
 	"os"
 	"testing"
 )
@@ -88,12 +89,15 @@ func TestEngine_Run_Categorical(t *testing.T) {
 		FitnessFunc: func(g Genome, env TestEnv) float64 {
 			return 1.0
 		},
-		Selector:    GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
-		Crossoverer: SinglePointCrossover{},
-		Mutator:     CategoricalMutator{Probability: 0.1},
-		Elitism:     1,
+		Selector:     GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
+		Crossoverers: []Crossoverer{SinglePointCrossover{}},
+		Mutators:     []Mutator{CategoricalMutator{Probability: 0.1}},
+		Elitism:      1,
 	}
-	engine := NewEngine[TestEnv, struct{}](config)
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
 	best, err := engine.Run(def)
 	if err != nil {
 		t.Fatalf("Engine.Run failed: %v", err)
@@ -378,3 +382,322 @@ func TestCategoricalCreepMutator(t *testing.T) {
 		t.Errorf("CategoricalCreepMutator failed: expected index 0 or 2, got %d", mutIdx)
 	}
 }
+
+func TestProbabilisticTournamentSelector(t *testing.T) {
+	rand.Seed(1) // Seed for deterministic tests
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: 5.0, Genome: BitGenome{true}},
+		{Fitness: 1.0, Genome: BitGenome{true}},
+	}
+
+	// We use Unique: true to ensure all 3 individuals are in the tournament,
+	// allowing us to isolate probabilistic behavior directly.
+	sHigh := NewProbabilisticTournamentSelector[TestEnv, struct{}](3, 0.999)
+	sHigh.Unique = true
+
+	sLow := NewProbabilisticTournamentSelector[TestEnv, struct{}](3, 0.001)
+	sLow.Unique = true
+
+	bestWins := 0
+	for i := 0; i < 100; i++ {
+		sel := sHigh.SelectTyped(pop)
+		if sel.Fitness == 10.0 {
+			bestWins++
+		}
+	}
+	if bestWins < 90 {
+		t.Errorf("Expected high fitness individual to win most of the time with P=0.999, got %d wins", bestWins)
+	}
+
+	worstWins := 0
+	for i := 0; i < 100; i++ {
+		sel := sLow.SelectTyped(pop)
+		if sel.Fitness == 1.0 {
+			worstWins++
+		}
+	}
+	if worstWins < 90 {
+		t.Errorf("Expected lowest fitness individual to win most of the time with P=0.001, got %d wins", worstWins)
+	}
+}
+
+func TestAdaptiveTournamentSelector(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 1.0, Genome: BitGenome{true}},
+		{Fitness: 2.0, Genome: BitGenome{true}},
+		{Fitness: 3.0, Genome: BitGenome{true}},
+		{Fitness: 4.0, Genome: BitGenome{true}},
+		{Fitness: 5.0, Genome: BitGenome{true}},
+	}
+
+	progress := 0.0
+	progressFunc := func() float64 {
+		return progress
+	}
+
+	s := NewAdaptiveTournamentSelector[TestEnv, struct{}](1, 5, progressFunc)
+	s.Unique = true // Ensure deterministic selection when size matches population size
+
+	// At start progress = 0.0, effective size is 1.
+	// Best (5.0) should not win 100% of the time.
+	progress = 0.0
+	fiveWinsStart := 0
+	for i := 0; i < 100; i++ {
+		if s.SelectTyped(pop).Fitness == 5.0 {
+			fiveWinsStart++
+		}
+	}
+	if fiveWinsStart == 100 {
+		t.Errorf("Size should be 1 at start progress, but got 100%% wins for the best individual")
+	}
+
+	// At end progress = 1.0, effective size is 5.
+	// Best (5.0) must win 100% of the time.
+	progress = 1.0
+	fiveWinsEnd := 0
+	for i := 0; i < 100; i++ {
+		if s.SelectTyped(pop).Fitness == 5.0 {
+			fiveWinsEnd++
+		}
+	}
+	if fiveWinsEnd != 100 {
+		t.Errorf("Expected best individual to win 100%% of the time at end progress (size 5), got %d wins", fiveWinsEnd)
+	}
+}
+
+func TestNichingTournamentSelector(t *testing.T) {
+	// Two identical individuals (BitGenome{true, true}) with fitness 10.0
+	// One different individual (BitGenome{false, false}) with fitness 8.0
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true, true}},
+		{Fitness: 10.0, Genome: BitGenome{true, true}},
+		{Fitness: 8.0, Genome: BitGenome{false, false}},
+	}
+
+	// Without niching, the best (10.0) always wins
+	sNoNiche := GenericTournamentSelector[TestEnv, struct{}]{Size: 3}
+	sNoNiche.Unique = true
+	if sNoNiche.SelectTyped(pop).Fitness != 10.0 {
+		t.Errorf("Expected 10.0 without niching")
+	}
+
+	// With niching (SigmaShare = 1.0)
+	// Hamming distance between identical is 0.0, which is < SigmaShare (1.0).
+	// They share and penalize each other: NicheCount = 1 + 1 = 2. AdjustedFit = 10.0 / 2.0 = 5.0.
+	// The different individual has distance 1.0 from others, so it doesn't share.
+	// AdjustedFit of different = 8.0 / 1.0 = 8.0.
+	// Since 8.0 > 5.0, the different individual wins.
+	sNiche := NewNichingTournamentSelector[TestEnv, struct{}](3, 1.0, nil)
+	sNiche.Unique = true
+	sel := sNiche.SelectTyped(pop)
+	if sel.Fitness != 8.0 {
+		t.Errorf("Expected different individual with fitness 8.0 to win due to niche penalty of duplicate individuals, got %f", sel.Fitness)
+	}
+}
+
+func TestUniqueTournamentSelector(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: 5.0, Genome: BitGenome{true}},
+	}
+
+	// With replacement (size 2), worst individual (5.0) can occasionally win
+	sWithRep := GenericTournamentSelector[TestEnv, struct{}]{Size: 2}
+	worstWinsWithRep := 0
+	for i := 0; i < 100; i++ {
+		if sWithRep.SelectTyped(pop).Fitness == 5.0 {
+			worstWinsWithRep++
+		}
+	}
+
+	// Without replacement (size 2), worst individual can NEVER win (since best is always present in a size-2 tournament of a size-2 population)
+	sUnique := NewUniqueTournamentSelector[TestEnv, struct{}](2)
+	worstWinsUnique := 0
+	for i := 0; i < 100; i++ {
+		if sUnique.SelectTyped(pop).Fitness == 5.0 {
+			worstWinsUnique++
+		}
+	}
+
+	if worstWinsUnique != 0 {
+		t.Errorf("Expected 0 wins for worst individual in unique tournament of size 2, got %d wins", worstWinsUnique)
+	}
+	
+	t.Logf("Worst individual won %d times with replacement, and %d times without replacement", worstWinsWithRep, worstWinsUnique)
+}
+
+func TestNewEngine_MissingFitnessFunc(t *testing.T) {
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize: 10,
+		MaxGenerations: 2,
+	}
+	_, err := NewEngine[TestEnv, struct{}](config)
+	if err == nil {
+		t.Error("Expected error when FitnessFunc is not defined, got nil")
+	} else if err.Error() != "FitnessFunc must be defined in EngineConfig" {
+		t.Errorf("Expected 'FitnessFunc must be defined in EngineConfig', got '%v'", err)
+	}
+}
+
+func TestNewEngine_DefaultFallbacks(t *testing.T) {
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize: 10,
+		MaxGenerations: 2,
+		FitnessFunc: func(g Genome, env TestEnv) float64 {
+			return 1.0
+		},
+	}
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine with default fallbacks: %v", err)
+	}
+
+	if engine.Config.Selector == nil {
+		t.Error("Expected default Selector to be set, got nil")
+	} else {
+		if _, ok := engine.Config.Selector.(GenericTournamentSelector[TestEnv, struct{}]); !ok {
+			t.Errorf("Expected default Selector to be GenericTournamentSelector, got %T", engine.Config.Selector)
+		}
+	}
+
+	if len(engine.Config.Crossoverers) != 1 {
+		t.Errorf("Expected 1 default crossoverer, got %d", len(engine.Config.Crossoverers))
+	} else {
+		if _, ok := engine.Config.Crossoverers[0].(DefaultCrossoverer); !ok {
+			t.Errorf("Expected default crossoverer to be DefaultCrossoverer, got %T", engine.Config.Crossoverers[0])
+		}
+	}
+
+	if len(engine.Config.Mutators) != 1 {
+		t.Errorf("Expected 1 default mutator, got %d", len(engine.Config.Mutators))
+	} else {
+		if _, ok := engine.Config.Mutators[0].(DefaultMutator); !ok {
+			t.Errorf("Expected default mutator to be DefaultMutator, got %T", engine.Config.Mutators[0])
+		}
+	}
+}
+
+type MockCrossoverer struct {
+	id int
+}
+
+func (m MockCrossoverer) Crossover(p1, p2 Genome) (Genome, Genome) {
+	return p1.Copy(), p2.Copy()
+}
+
+type MockMutator struct {
+	id int
+}
+
+func (m MockMutator) Mutate(g Genome) Genome {
+	return g.Copy()
+}
+
+func TestEngine_RoundRobinOperators(t *testing.T) {
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize: 10,
+		MaxGenerations: 2,
+		FitnessFunc: func(g Genome, env TestEnv) float64 {
+			return 1.0
+		},
+		Crossoverers: []Crossoverer{
+			MockCrossoverer{id: 1},
+			MockCrossoverer{id: 2},
+		},
+		Mutators: []Mutator{
+			MockMutator{id: 1},
+			MockMutator{id: 2},
+			MockMutator{id: 3},
+		},
+	}
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	// Verify crossover round-robin sequencing
+	c1 := engine.selectCrossoverer().(MockCrossoverer)
+	c2 := engine.selectCrossoverer().(MockCrossoverer)
+	c3 := engine.selectCrossoverer().(MockCrossoverer)
+	c4 := engine.selectCrossoverer().(MockCrossoverer)
+
+	if c1.id != 1 || c2.id != 2 || c3.id != 1 || c4.id != 2 {
+		t.Errorf("Expected crossoverer sequencing [1, 2, 1, 2], got [%d, %d, %d, %d]", c1.id, c2.id, c3.id, c4.id)
+	}
+
+	// Verify mutator round-robin sequencing
+	m1 := engine.selectMutator().(MockMutator)
+	m2 := engine.selectMutator().(MockMutator)
+	m3 := engine.selectMutator().(MockMutator)
+	m4 := engine.selectMutator().(MockMutator)
+
+	if m1.id != 1 || m2.id != 2 || m3.id != 3 || m4.id != 1 {
+		t.Errorf("Expected mutator sequencing [1, 2, 3, 1], got [%d, %d, %d, %d]", m1.id, m2.id, m3.id, m4.id)
+	}
+}
+
+func TestEngine_WeightedOperators(t *testing.T) {
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize: 10,
+		MaxGenerations: 2,
+		FitnessFunc: func(g Genome, env TestEnv) float64 {
+			return 1.0
+		},
+		Crossoverers: []Crossoverer{
+			MockCrossoverer{id: 1},
+			MockCrossoverer{id: 2},
+		},
+		CrossovererWeights: []float64{0.0, 1.0},
+		Mutators: []Mutator{
+			MockMutator{id: 1},
+			MockMutator{id: 2},
+		},
+		MutatorWeights: []float64{1.0, 0.0},
+	}
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	// With weights [0.0, 1.0], only crossoverer 2 should be selected.
+	for i := 0; i < 100; i++ {
+		c := engine.selectCrossoverer().(MockCrossoverer)
+		if c.id != 2 {
+			t.Errorf("Expected crossoverer with weight 1.0 to always be selected, but got id %d", c.id)
+			break
+		}
+	}
+
+	// With weights [1.0, 0.0], only mutator 1 should be selected.
+	for i := 0; i < 100; i++ {
+		m := engine.selectMutator().(MockMutator)
+		if m.id != 1 {
+			t.Errorf("Expected mutator with weight 1.0 to always be selected, but got id %d", m.id)
+			break
+		}
+	}
+
+	// Test invalid weights validation inside NewEngine
+	invalidConfig1 := config
+	invalidConfig1.CrossovererWeights = []float64{1.0} // size mismatch
+	_, err = NewEngine[TestEnv, struct{}](invalidConfig1)
+	if err == nil {
+		t.Error("Expected error for CrossovererWeights size mismatch, got nil")
+	}
+
+	invalidConfig2 := config
+	invalidConfig2.CrossovererWeights = []float64{-1.0, 2.0} // negative value
+	_, err = NewEngine[TestEnv, struct{}](invalidConfig2)
+	if err == nil {
+		t.Error("Expected error for negative CrossovererWeights, got nil")
+	}
+
+	invalidConfig3 := config
+	invalidConfig3.CrossovererWeights = []float64{0.0, 0.0} // zero sum
+	_, err = NewEngine[TestEnv, struct{}](invalidConfig3)
+	if err == nil {
+		t.Error("Expected error for zero-sum CrossovererWeights, got nil")
+	}
+}
+
