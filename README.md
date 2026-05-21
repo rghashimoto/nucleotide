@@ -32,14 +32,40 @@ In a software system, imagine a **Sorting Strategy**:
 Evolution in Nucleotide works by testing which **Gene** performs best at each **Locus** given a specific environment.
 
 ## Advanced Dynamics
-
+ 
 ### 1. Execution Order
 Nucleotide allows the evolution of the **order in which genes are expressed**. In many systems, the sequence of operations is as critical as the operations themselves. For example, in a processing pipeline, executing `ValidateData` before `SaveToDB` is mandatory, but the order of optional `Enrichment` steps might yield different results depending on environmental constraints (like latency or data availability).
-
+ 
 ### 2. Parameterization & Adaptation
 **Parameter Genes** allow a specific algorithm (Gene) to operate differently to best suit its environment. 
 - **Example**: In a **K-Means Clustering** algorithm, the number of clusters (*k*) is a critical parameter. 
 - A locus could define the "Cluster Count", and evolution would find the optimal *k* for the current dataset, allowing the same K-Means gene to adapt its behavior without changing its core logic.
+
+## Advanced Selection & Evolution Operators
+
+Nucleotide provides a highly customizable operator execution model and advanced selection algorithms to prevent premature convergence and control selection pressure.
+
+### 1. Multi-Operator Slices & Fallback Defaults
+Instead of defining a single crossover or mutation strategy, `EngineConfig` supports multiple strategies in slices:
+- **`Crossoverers` & `Mutators`**: Slices of strategies that run interchangeably. If empty, Nucleotide supplies smart defaults (`DefaultCrossoverer` and `DefaultMutator`) that automatically adjust at runtime to the type of genome being processed (`BitGenome`, `FloatGenome`, or `CategoricalGenome`).
+- **Pondered Weights**: Use `CrossovererWeights` and `MutatorWeights` to configure custom probability distributions for each operator. If weights are omitted, the engine defaults to a smooth, alternating **Round-Robin** sequencing strategy.
+
+### 2. Individual Lifetime (Age) Tracking
+Individuals track their survival generation span using an `Age` property, initialized to `0` and automatically incremented at the end of each generation loop in the evolutionary engine. This age metric is used to model life expectancy and introduce biological selection penalties.
+
+### 3. State-of-the-Art Selection Operators
+All custom selectors implement the standard `Selector` interface:
+* **`RouletteWheelSelector[E, S]`**: Proportional fitness selection with optional `AutoShift` capability to handle negative fitness boundaries.
+* **`StochasticUniversalSamplingSelector[E, S]`**: Low-variance, zero-bias multi-pointer selection utilizing a single-spin buffer queue to ensure equal-interval selection across sequential calls.
+* **`RankSelector[E, S]`**: Maps absolute fitness values to linear ranks ($1$ to $N$) with customizable `SelectionPressure` values. Prevents super-individuals from dominating early generations.
+* **`BoltzmannSelector[E, S]`**: Standard temperature-scaled selection ($e^{f(x) / T}$) allowing exploration/exploitation weighting across epochs.
+
+### 4. Advanced `GenericTournamentSelector[E, S]` Features
+The built-in tournament selector can be enhanced using several advanced, fully opt-in dynamics:
+- **Adaptive Diversity**: Sizing adapts dynamically depending on population standard deviation (reducing tournament size when diversity is low to encourage exploration).
+- **Age Bias**: A custom penalty applied to competitor fitness proportional to their survival age (`adjustedFit = adjustedFit - age * AgeBias`) to prevent stagnation.
+- **Hall of Fame competitor mixing**: Integrates historical elite individuals into active tournaments with a specified `HallOfFameProbability` to encourage competition.
+- **Self-Adaptive Sizing**: Individuals can adaptively define their preferred tournament sizing (`TournamentSize`) through parameter genes or custom state interfaces implementing `SelfAdaptiveIndividual`.
 
 ## Installation
 
