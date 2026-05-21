@@ -18,7 +18,7 @@ type GenomeData struct {
 }
 
 // EncodeGenome encodes a CategoricalGenome's gene IDs into a JSON byte slice.
-func EncodeGenome[E any](g *CategoricalGenome[E]) ([]byte, error) {
+func EncodeGenome[E any, S any](g *CategoricalGenome[E, S]) ([]byte, error) {
 	data := GenomeData{
 		Genes: make([]LocusGenePair, len(g.GeneIndices)),
 	}
@@ -38,7 +38,7 @@ func EncodeGenome[E any](g *CategoricalGenome[E]) ([]byte, error) {
 }
 
 // DecodeGenome decodes gene IDs from a JSON byte slice and maps them to indices in the provided Definition.
-func DecodeGenome[E any](def *Definition[E], data []byte) (*CategoricalGenome[E], error) {
+func DecodeGenome[E any, S any](def *Definition[E, S], data []byte) (*CategoricalGenome[E, S], error) {
 	var gData GenomeData
 	if err := json.Unmarshal(data, &gData); err != nil {
 		return nil, err
@@ -69,14 +69,14 @@ func DecodeGenome[E any](def *Definition[E], data []byte) (*CategoricalGenome[E]
 		}
 	}
 
-	return &CategoricalGenome[E]{
+	return &CategoricalGenome[E, S]{
 		Definition:  def,
 		GeneIndices: indices,
 	}, nil
 }
 
 // SaveGenome saves a CategoricalGenome's gene IDs to a JSON file.
-func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
+func SaveGenome[E any, S any](g *CategoricalGenome[E, S], filename string) error {
 	bytes, err := EncodeGenome(g)
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func SaveGenome[E any](g *CategoricalGenome[E], filename string) error {
 }
 
 // LoadGenome loads gene IDs from a JSON file and maps them to indices in the provided Definition.
-func LoadGenome[E any](def *Definition[E], filename string) (*CategoricalGenome[E], error) {
+func LoadGenome[E any, S any](def *Definition[E, S], filename string) (*CategoricalGenome[E, S], error) {
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err

@@ -8,21 +8,22 @@ import (
 )
 
 // Individual represents a candidate solution in the population.
-type Individual[E any] struct {
+type Individual[E any, S any] struct {
 	Genome  Genome
 	Fitness float64
+	State   S
 }
 
 // NewIndividual creates a new individual with the given genome.
-func NewIndividual[E any](genome Genome) *Individual[E] {
-	return &Individual[E]{
+func NewIndividual[E any, S any](genome Genome) *Individual[E, S] {
+	return &Individual[E, S]{
 		Genome: genome,
 	}
 }
 
 // GetParameter returns the value of a parameter gene at a specific locus ID.
-func (ind *Individual[E]) GetParameter(locusID string) interface{} {
-	if cg, ok := ind.Genome.(*CategoricalGenome[E]); ok {
+func (ind *Individual[E, S]) GetParameter(locusID string) interface{} {
+	if cg, ok := ind.Genome.(*CategoricalGenome[E, S]); ok {
 		for i, locus := range cg.Definition.Loci {
 			if locus.ID == locusID && locus.Type == LocusParameter {
 				geneIdx := cg.GeneIndices[i]
@@ -34,14 +35,14 @@ func (ind *Individual[E]) GetParameter(locusID string) interface{} {
 }
 
 // Express executes the behavioral genes based on the configuration loci, with access to the environment and a cancellable context.
-func (ind *Individual[E]) Express(ctx context.Context, env E) {
-	cg, ok := ind.Genome.(*CategoricalGenome[E])
+func (ind *Individual[E, S]) Express(ctx context.Context, env E) {
+	cg, ok := ind.Genome.(*CategoricalGenome[E, S])
 	if !ok {
 		return
 	}
 
 	// 1. Identify behavioral loci and config loci
-	behavioralLoci := []*Locus[E]{}
+	behavioralLoci := []*Locus[E, S]{}
 	behavioralIndices := []int{}
 	selectedGeneIDs := []string{}
 	selectedGeneIndices := []int{}
@@ -67,7 +68,7 @@ func (ind *Individual[E]) Express(ctx context.Context, env E) {
 	order := make([]int, len(behavioralIndices))
 	copy(order, behavioralIndices)
 
-	seqCtx := SequencingContext[E]{
+	seqCtx := SequencingContext[E, S]{
 		BehavioralLoci:      behavioralLoci,
 		SelectedGeneIDs:     selectedGeneIDs,
 		SelectedGeneIndices: selectedGeneIndices,
@@ -81,7 +82,7 @@ func (ind *Individual[E]) Express(ctx context.Context, env E) {
 			})
 		}
 		// "sequential" is default
-	case func(SequencingContext[E]) []int:
+	case func(SequencingContext[E, S]) []int:
 		relOrder := v(seqCtx)
 		absOrder := make([]int, len(relOrder))
 		for i, relIdx := range relOrder {
@@ -91,7 +92,7 @@ func (ind *Individual[E]) Express(ctx context.Context, env E) {
 	}
 
 	// 3. Execute callbacks
-	callCtx := Context[E]{Ctx: ctx, Individual: ind, Env: env}
+	callCtx := Context[E, S]{Ctx: ctx, Individual: ind, Env: env}
 	for _, idx := range order {
 		// Check for cancellation before executing each gene
 		select {
@@ -111,15 +112,15 @@ func (ind *Individual[E]) Express(ctx context.Context, env E) {
 }
 
 // ToJSON encodes the individual's genome to a JSON byte slice.
-func (ind *Individual[E]) ToJSON() ([]byte, error) {
-	if cg, ok := ind.Genome.(*CategoricalGenome[E]); ok {
+func (ind *Individual[E, S]) ToJSON() ([]byte, error) {
+	if cg, ok := ind.Genome.(*CategoricalGenome[E, S]); ok {
 		return EncodeGenome(cg)
 	}
 	return nil, fmt.Errorf("individual genome is not categorical")
 }
 
 // Save saves the individual's genome to a JSON file.
-func (ind *Individual[E]) Save(filename string) error {
+func (ind *Individual[E, S]) Save(filename string) error {
 	bytes, err := ind.ToJSON()
 	if err != nil {
 		return err
@@ -128,10 +129,10 @@ func (ind *Individual[E]) Save(filename string) error {
 }
 
 // Population is a collection of individuals.
-type Population[E any] []*Individual[E]
+type Population[E any, S any] []*Individual[E, S]
 
 // Best returns the individual with the highest fitness.
-func (p Population[E]) Best() *Individual[E] {
+func (p Population[E, S]) Best() *Individual[E, S] {
 	if len(p) == 0 {
 		return nil
 	}
@@ -145,7 +146,7 @@ func (p Population[E]) Best() *Individual[E] {
 }
 
 // AverageFitness returns the average fitness.
-func (p Population[E]) AverageFitness() float64 {
+func (p Population[E, S]) AverageFitness() float64 {
 	if len(p) == 0 {
 		return 0
 	}

@@ -25,26 +25,26 @@ func main() {
 		return float64(count)
 	}
 
-	initialPop := make(nucleotide.Population[EmptyEnv], popSize)
+	initialPop := make(nucleotide.Population[EmptyEnv, struct{}], popSize)
 	for i := 0; i < popSize; i++ {
 		genome := make(nucleotide.BitGenome, genomeSize)
 		for j := 0; j < genomeSize; j++ {
 			genome[j] = rand.Float64() < 0.5
 		}
-		initialPop[i] = nucleotide.NewIndividual[EmptyEnv](genome)
+		initialPop[i] = nucleotide.NewIndividual[EmptyEnv, struct{}](genome)
 	}
 
-	config := nucleotide.EngineConfig[EmptyEnv]{
+	config := nucleotide.EngineConfig[EmptyEnv, struct{}]{
 		PopulationSize: popSize,
 		MaxGenerations: maxGens,
 		FitnessFunc:    fitnessFunc,
-		Selector:       nucleotide.GenericTournamentSelector[EmptyEnv]{Size: 3},
+		Selector:       nucleotide.GenericTournamentSelector[EmptyEnv, struct{}]{Size: 3},
 		Crossoverer:    nucleotide.SinglePointCrossover{},
 		Mutator:        nucleotide.BitFlipMutator{Probability: 0.01},
 		Elitism:        1,
 		Env:            EmptyEnv{},
 	}
-	engine := nucleotide.NewEngine[EmptyEnv](config)
+	engine := nucleotide.NewEngine[EmptyEnv, struct{}](config)
 	engine.Population = initialPop
 
 	best, _ := engine.Run(nil)

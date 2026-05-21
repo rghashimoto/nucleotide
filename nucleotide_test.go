@@ -36,7 +36,7 @@ func TestFloatGenome_Copy(t *testing.T) {
 }
 
 func TestPopulation_Methods(t *testing.T) {
-	pop := Population[TestEnv]{
+	pop := Population[TestEnv, struct{}]{
 		{Fitness: 10},
 		{Fitness: 30},
 		{Fitness: 20},
@@ -48,7 +48,7 @@ func TestPopulation_Methods(t *testing.T) {
 		t.Errorf("AverageFitness() failed: got %f", pop.AverageFitness())
 	}
 	
-	empty := Population[TestEnv]{}
+	empty := Population[TestEnv, struct{}]{}
 	if empty.Best() != nil {
 		t.Error("Best() on empty population should be nil")
 	}
@@ -58,12 +58,12 @@ func TestPopulation_Methods(t *testing.T) {
 }
 
 func TestGenericTournamentSelector(t *testing.T) {
-	pop := Population[TestEnv]{
+	pop := Population[TestEnv, struct{}]{
 		{Fitness: 10},
 		{Fitness: 20},
 		{Fitness: 30},
 	}
-	s := GenericTournamentSelector[TestEnv]{Size: 2}
+	s := GenericTournamentSelector[TestEnv, struct{}]{Size: 2}
 	selected := s.SelectTyped(pop)
 	if selected == nil {
 		t.Fatal("Selected individual is nil")
@@ -72,28 +72,28 @@ func TestGenericTournamentSelector(t *testing.T) {
 	// Test interface implementation
 	var is Selector = s
 	selInterface := is.Select(pop)
-	if selInterface.(*Individual[TestEnv]) == nil {
+	if selInterface.(*Individual[TestEnv, struct{}]) == nil {
 		t.Error("Interface Select failed")
 	}
 }
 
 func TestEngine_Run_Categorical(t *testing.T) {
-	def := NewDefinition[TestEnv]()
+	def := NewDefinition[TestEnv, struct{}]()
 	l1 := def.AddLocus("L1", LocusBehavioral)
-	l1.AddGene("G1", func(ctx Context[TestEnv]) {})
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
 	
-	config := EngineConfig[TestEnv]{
+	config := EngineConfig[TestEnv, struct{}]{
 		PopulationSize: 10,
 		MaxGenerations: 2,
 		FitnessFunc: func(g Genome, env TestEnv) float64 {
 			return 1.0
 		},
-		Selector:    GenericTournamentSelector[TestEnv]{Size: 3},
+		Selector:    GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
 		Crossoverer: SinglePointCrossover{},
 		Mutator:     CategoricalMutator{Probability: 0.1},
 		Elitism:     1,
 	}
-	engine := NewEngine[TestEnv](config)
+	engine := NewEngine[TestEnv, struct{}](config)
 	best, err := engine.Run(def)
 	if err != nil {
 		t.Fatalf("Engine.Run failed: %v", err)
@@ -107,7 +107,7 @@ func TestEngine_Run_Categorical(t *testing.T) {
 }
 
 func TestElitism_TopN(t *testing.T) {
-	pop := Population[TestEnv]{
+	pop := Population[TestEnv, struct{}]{
 		{Fitness: 10, Genome: BitGenome{false}},
 		{Fitness: 30, Genome: BitGenome{true}},
 		{Fitness: 20, Genome: BitGenome{false}},
@@ -136,12 +136,12 @@ func TestBitFlipMutator(t *testing.T) {
 }
 
 func TestSerialization_Robust(t *testing.T) {
-	def := NewDefinition[TestEnv]()
+	def := NewDefinition[TestEnv, struct{}]()
 	l1 := def.AddLocus("L1", LocusBehavioral)
-	l1.AddGene("G1", func(ctx Context[TestEnv]) {})
-	l1.AddGene("G2", func(ctx Context[TestEnv]) {})
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
 	
-	g := &CategoricalGenome[TestEnv]{
+	g := &CategoricalGenome[TestEnv, struct{}]{
 		Definition:  def,
 		GeneIndices: []int{0, 1}, // Execution Order (Sequential), L1 (G2)
 	}
@@ -160,10 +160,10 @@ func TestSerialization_Robust(t *testing.T) {
 	}
 	
 	// Load using a DIFFERENT definition with SAME IDs but DIFFERENT order
-	def2 := NewDefinition[TestEnv]()
+	def2 := NewDefinition[TestEnv, struct{}]()
 	l1_2 := def2.AddLocus("L1", LocusBehavioral)
-	l1_2.AddGene("G2", func(ctx Context[TestEnv]) {}) // G2 is now index 0
-	l1_2.AddGene("G1", func(ctx Context[TestEnv]) {})
+	l1_2.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {}) // G2 is now index 0
+	l1_2.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
 	
 	loaded, err := LoadGenome(def2, filename)
 	if err != nil {
@@ -189,17 +189,17 @@ func stringContains(s, substr string) bool {
 }
 
 func TestExpress_Cancellation(t *testing.T) {
-	def := NewDefinition[TestEnv]()
+	def := NewDefinition[TestEnv, struct{}]()
 	l1 := def.AddLocus("L1", LocusBehavioral)
 	count := 0
-	l1.AddGene("G1", func(ctx Context[TestEnv]) { count++ })
-	l1.AddGene("G2", func(ctx Context[TestEnv]) { count++ })
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) { count++ })
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) { count++ })
 	
-	g := &CategoricalGenome[TestEnv]{
+	g := &CategoricalGenome[TestEnv, struct{}]{
 		Definition:  def,
 		GeneIndices: []int{0, 0, 1}, // Seq, G1, G2
 	}
-	ind := NewIndividual[TestEnv](g)
+	ind := NewIndividual[TestEnv, struct{}](g)
 	
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -209,12 +209,13 @@ func TestExpress_Cancellation(t *testing.T) {
 		t.Errorf("Express did not respect cancellation: executed %d genes", count)
 	}
 }
+
 func TestMemorySerialization(t *testing.T) {
-	def := NewDefinition[TestEnv]()
+	def := NewDefinition[TestEnv, struct{}]()
 	l1 := def.AddLocus("L1", LocusBehavioral)
-	l1.AddGene("G1", func(ctx Context[TestEnv]) {})
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
 	
-	g := &CategoricalGenome[TestEnv]{
+	g := &CategoricalGenome[TestEnv, struct{}]{
 		Definition:  def,
 		GeneIndices: []int{0, 0},
 	}
@@ -231,5 +232,41 @@ func TestMemorySerialization(t *testing.T) {
 	
 	if loaded.GeneIndices[1] != g.GeneIndices[1] {
 		t.Errorf("Mismatch after decode")
+	}
+}
+
+type CounterState struct {
+	Count int
+}
+
+func TestExpress_StateInteraction(t *testing.T) {
+	def := NewDefinition[TestEnv, *CounterState]()
+	
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	// First gene increments state Count
+	l1.AddGene("G1", func(ctx Context[TestEnv, *CounterState]) {
+		ctx.Individual.State.Count += 5
+	})
+	
+	l2 := def.AddLocus("L2", LocusBehavioral)
+	// Second gene multiplies state Count by 2
+	l2.AddGene("G2", func(ctx Context[TestEnv, *CounterState]) {
+		ctx.Individual.State.Count *= 2
+	})
+	
+	g := &CategoricalGenome[TestEnv, *CounterState]{
+		Definition:  def,
+		GeneIndices: []int{0, 0, 0}, // Execution Order (Sequential), L1 (G1), L2 (G2)
+	}
+	
+	ind := NewIndividual[TestEnv, *CounterState](g)
+	state := &CounterState{Count: 3}
+	ind.State = state
+	
+	ind.Express(context.Background(), TestEnv{})
+	
+	// Value should be: (3 + 5) * 2 = 16
+	if state.Count != 16 {
+		t.Errorf("Expected Count to be 16, got %d. Gene execution state interaction failed.", state.Count)
 	}
 }

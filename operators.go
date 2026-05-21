@@ -33,36 +33,29 @@ func (s TournamentSelector) Select(pop interface{}) interface{} {
 	// This is a bit clunky due to Go's interface/generics limitations,
 	// but it allows the Engine to use the selector.
 	
-	// Try to handle Population[E any]
-	// Actually, we can't easily switch on a generic type like Population[E].
-	// For now, let's assume we are passing a type that has a Best() and random access.
-	
 	// A better way is to make TournamentSelector generic if we know the type E.
 	return nil // Placeholder, will fix below with a generic-friendly approach
 }
 
-// GenericTournamentSelector is a type-safe selector for a specific environment E.
-type GenericTournamentSelector[E any] struct {
+// GenericTournamentSelector is a type-safe selector for a specific environment E and state S.
+type GenericTournamentSelector[E any, S any] struct {
 	Size int
 }
 
-func (s GenericTournamentSelector[E]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[E]))
+func (s GenericTournamentSelector[E, S]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[E, S]))
 }
 
-func (s GenericTournamentSelector[E]) SelectTyped(pop Population[E]) *Individual[E] {
+func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
 	if len(pop) == 0 {
 		return nil
 	}
-	tournament := make(Population[E], s.Size)
+	tournament := make(Population[E, S], s.Size)
 	for i := 0; i < s.Size; i++ {
 		tournament[i] = pop[rand.Intn(len(pop))]
 	}
 	return tournament.Best()
 }
-
-// Since Engine expects a Selector interface, we need a way to wrap the generic one.
-// However, given the complexity, let's redefine the Engine to take a generic selector.
 
 // SinglePointCrossover performs crossover at a single random point.
 type SinglePointCrossover struct{}
@@ -75,7 +68,7 @@ func (c SinglePointCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
 
 	point := rand.Intn(size-1) + 1
 
-	// We need to handle CategoricalGenome[E any]. Since we don't know E,
+	// We need to handle CategoricalGenome[E any, S any]. Since we don't know E and S,
 	// we can try to use type assertions for common types or reflect.
 	// But wait, CategoricalGenome stores indices! The indices are not generic!
 	// Only the Definition is generic.
@@ -131,7 +124,7 @@ type CategoricalMutator struct {
 }
 
 func (m CategoricalMutator) Mutate(g Genome) Genome {
-	// Again, we need to handle the generic CategoricalGenome[E].
+	// Again, we need to handle the generic CategoricalGenome[E, S].
 	// Let's use the same indexedGenome interface.
 	
 	type mutableIndexedGenome interface {
