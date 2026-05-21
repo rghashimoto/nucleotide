@@ -17,6 +17,9 @@ It introduces the concept of **Categorical Genomes**, where evolution doesn't ju
 
 ## Core Concepts: Loci vs. Genes
 
+> [!NOTE]
+> **Loci** (pronounced *lo-sigh*) is the plural form of **Locus**. Throughout the library and documentation, we use **Locus** when referring to a single slot, and **Loci** when referring to multiple slots.
+
 To understand Nucleotide, it's essential to distinguish between a **Locus** and a **Gene**:
 
 ### The Biological Analogy
