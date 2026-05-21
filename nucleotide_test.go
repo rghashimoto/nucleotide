@@ -701,3 +701,187 @@ func TestEngine_WeightedOperators(t *testing.T) {
 	}
 }
 
+func TestRouletteWheelSelector(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: 20.0, Genome: BitGenome{true}},
+		{Fitness: 30.0, Genome: BitGenome{true}},
+	}
+	s := RouletteWheelSelector[TestEnv, struct{}]{AutoShift: true}
+	for i := 0; i < 100; i++ {
+		sel := s.SelectTyped(pop)
+		if sel == nil {
+			t.Fatal("RouletteWheelSelector returned nil selection")
+		}
+	}
+
+	negPop := Population[TestEnv, struct{}]{
+		{Fitness: -10.0, Genome: BitGenome{true}},
+		{Fitness: -5.0, Genome: BitGenome{true}},
+	}
+	for i := 0; i < 50; i++ {
+		sel := s.SelectTyped(negPop)
+		if sel == nil {
+			t.Fatal("RouletteWheelSelector failed to select with negative fitness auto-shifting")
+		}
+	}
+}
+
+func TestStochasticUniversalSamplingSelector(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: 20.0, Genome: BitGenome{true}},
+		{Fitness: 30.0, Genome: BitGenome{true}},
+	}
+	s := StochasticUniversalSamplingSelector[TestEnv, struct{}]{AutoShift: true}
+	
+	for i := 0; i < 100; i++ {
+		sel := s.SelectTyped(pop)
+		if sel == nil {
+			t.Fatal("StochasticUniversalSamplingSelector returned nil selection")
+		}
+	}
+}
+
+func TestRankSelector(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 100.0, Genome: BitGenome{true}},
+		{Fitness: 1.0, Genome: BitGenome{true}},
+	}
+	s := RankSelector[TestEnv, struct{}]{SelectionPressure: 2.0}
+	
+	bestCount := 0
+	for i := 0; i < 100; i++ {
+		sel := s.SelectTyped(pop)
+		if sel.Fitness == 100.0 {
+			bestCount++
+		}
+	}
+	if bestCount != 100 {
+		t.Errorf("Expected best individual to be selected 100 times under linear rank selection with SP 2.0, got %d", bestCount)
+	}
+}
+
+func TestBoltzmannSelector(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 100.0, Genome: BitGenome{true}},
+		{Fitness: 1.0, Genome: BitGenome{true}},
+	}
+	
+	sCold := BoltzmannSelector[TestEnv, struct{}]{Temperature: 0.0001}
+	coldBestWins := 0
+	for i := 0; i < 100; i++ {
+		if sCold.SelectTyped(pop).Fitness == 100.0 {
+			coldBestWins++
+		}
+	}
+	if coldBestWins != 100 {
+		t.Errorf("Expected cold Boltzmann selection to always select best, got %d wins", coldBestWins)
+	}
+}
+
+func TestGenericTournamentSelector_AdaptiveDiversity(t *testing.T) {
+	uniformPop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: 10.0, Genome: BitGenome{true}},
+	}
+
+	s := GenericTournamentSelector[TestEnv, struct{}]{
+		Size:              3,
+		MinSize:           2,
+		MaxSize:           4,
+		AdaptiveDiversity: true,
+	}
+
+	sel := s.SelectTyped(uniformPop)
+	if sel == nil {
+		t.Error("AdaptiveDiversity selection failed")
+	}
+}
+
+func TestGenericTournamentSelector_AgeBias(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 10.0, Genome: BitGenome{true}, Age: 0},
+		{Fitness: 10.0, Genome: BitGenome{true}, Age: 10},
+	}
+
+	s := GenericTournamentSelector[TestEnv, struct{}]{
+		Size:    2,
+		Unique:  true,
+		AgeBias: 1.0,
+	}
+
+	for i := 0; i < 100; i++ {
+		sel := s.SelectTyped(pop)
+		if sel.Age != 0 {
+			t.Errorf("Expected young individual to win due to age penalty, but got age %d", sel.Age)
+			break
+		}
+	}
+}
+
+func TestGenericTournamentSelector_HallOfFame(t *testing.T) {
+	pop := Population[TestEnv, struct{}]{
+		{Fitness: 1.0, Genome: BitGenome{true}},
+	}
+	hof := Population[TestEnv, struct{}]{
+		{Fitness: 99.0, Genome: BitGenome{true}},
+	}
+
+	s := GenericTournamentSelector[TestEnv, struct{}]{
+		Size:                  2,
+		HallOfFame:            &hof,
+		HallOfFameProbability: 1.0,
+	}
+
+	sel := s.SelectTyped(pop)
+	if sel.Fitness != 99.0 && sel.Fitness != 1.0 {
+		t.Errorf("Expected individual with fitness 99.0 or 1.0, got %f", sel.Fitness)
+	}
+}
+
+type CustomSelfAdaptiveState struct {
+	PreferredK int
+}
+
+func (c CustomSelfAdaptiveState) GetSelectionPreferences() (int, bool) {
+	return c.PreferredK, true
+}
+
+func TestGenericTournamentSelector_SelfAdaptive(t *testing.T) {
+	p1 := Individual[TestEnv, CustomSelfAdaptiveState]{
+		Fitness: 1.0,
+		Genome:  BitGenome{true},
+		State:   CustomSelfAdaptiveState{PreferredK: 1},
+	}
+
+	p2 := Individual[TestEnv, CustomSelfAdaptiveState]{
+		Fitness: 10.0,
+		Genome:  BitGenome{true},
+		State:   CustomSelfAdaptiveState{PreferredK: 1},
+	}
+
+	pop := Population[TestEnv, CustomSelfAdaptiveState]{
+		&p1,
+		&p2,
+	}
+
+	s := GenericTournamentSelector[TestEnv, CustomSelfAdaptiveState]{
+		Size:         2,
+		SelfAdaptive: true,
+	}
+
+	wins := 0
+	for i := 0; i < 100; i++ {
+		sel := s.SelectTyped(pop)
+		if sel.Fitness == 1.0 {
+			wins++
+		}
+	}
+	if wins == 0 {
+		t.Error("SelfAdaptive with size 1 failed to allow p1 to win")
+	}
+}
+
+

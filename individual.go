@@ -12,6 +12,7 @@ type Individual[E any, S any] struct {
 	Genome  Genome
 	Fitness float64
 	State   S
+	Age     int
 }
 
 // NewIndividual creates a new individual with the given genome.

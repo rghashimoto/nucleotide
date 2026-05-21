@@ -58,6 +58,19 @@ type GenericTournamentSelector[E any, S any] struct {
 
 	// Unique Tournament
 	Unique bool // If true, selects competitors without replacement.
+
+	// Diversity-based Adaptive Sizing
+	AdaptiveDiversity bool
+
+	// Age-biased Selection
+	AgeBias float64
+
+	// Hall of Fame Competitor Integration
+	HallOfFame            *Population[E, S]
+	HallOfFameProbability float64
+
+	// Self-adaptive Selection
+	SelfAdaptive bool
 }
 
 // NewProbabilisticTournamentSelector creates a tournament selector with selection probability controls.
@@ -158,7 +171,7 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 		return nil
 	}
 
-	// 1. Determine effective size (Adaptive Tournament Support)
+	// 1. Determine effective size (Adaptive Tournament & Diversity-based Sizing)
 	size := s.Size
 	if s.GenerationProgress != nil && s.MinSize > 0 && s.MaxSize > 0 {
 		progress := s.GenerationProgress()
@@ -169,7 +182,43 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 			progress = 1
 		}
 		size = int(float64(s.MinSize) + progress*float64(s.MaxSize-s.MinSize))
+	} else if s.AdaptiveDiversity && n > 1 {
+		var total float64
+		for _, ind := range pop {
+			total += ind.Fitness
+		}
+		avg := total / float64(n)
+
+		var varianceSum float64
+		for _, ind := range pop {
+			diff := ind.Fitness - avg
+			varianceSum += diff * diff
+		}
+		stdDev := math.Sqrt(varianceSum / float64(n))
+
+		minSz := s.MinSize
+		if minSz < 1 {
+			minSz = 2
+		}
+		maxSz := s.MaxSize
+		if maxSz < minSz {
+			maxSz = s.Size
+		}
+		if maxSz < minSz {
+			maxSz = minSz + 2
+		}
+
+		if avg > 0 {
+			ratio := stdDev / avg
+			if ratio > 1.0 {
+				ratio = 1.0
+			}
+			size = minSz + int(ratio*float64(maxSz-minSz))
+		} else {
+			size = minSz
+		}
 	}
+
 	if size < 1 {
 		size = 1
 	}
@@ -177,27 +226,85 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 		size = n
 	}
 
-	// 2. Sample competitors (Unique Tournament Support)
-	tournament := make(Population[E, S], size)
-	if s.Unique {
-		selectedIndices := make(map[int]bool)
-		for i := 0; i < size; i++ {
-			for {
-				idx := rand.Intn(n)
-				if !selectedIndices[idx] {
-					selectedIndices[idx] = true
-					tournament[i] = pop[idx]
-					break
+	// 1.5 Self-adaptive Selection Size Override
+	var tournament Population[E, S]
+	if s.SelfAdaptive && n > 1 {
+		candidate := pop[rand.Intn(n)]
+		k := s.Size
+
+		type SelfAdaptiveIndividual interface {
+			GetSelectionPreferences() (int, bool)
+		}
+		if sai, ok := interface{}(candidate).(SelfAdaptiveIndividual); ok {
+			if preferredK, ok := sai.GetSelectionPreferences(); ok {
+				k = preferredK
+			}
+		} else if sas, ok := interface{}(candidate.State).(SelfAdaptiveIndividual); ok {
+			if preferredK, ok := sas.GetSelectionPreferences(); ok {
+				k = preferredK
+			}
+		} else if cg, ok := candidate.Genome.(*CategoricalGenome[E, S]); ok {
+			for i, locus := range cg.Definition.Loci {
+				if locus.ID == "TournamentSize" && locus.Type == LocusParameter {
+					geneIdx := cg.GeneIndices[i]
+					if val, ok := locus.PossibleGenes[geneIdx].Value.(int); ok {
+						k = val
+					}
 				}
 			}
 		}
-	} else {
-		for i := 0; i < size; i++ {
+
+		if k < 1 {
+			k = 1
+		}
+		if k > n {
+			k = n
+		}
+
+		tournament = make(Population[E, S], k)
+		tournament[0] = candidate
+		for i := 1; i < k; i++ {
 			tournament[i] = pop[rand.Intn(n)]
+		}
+		size = k
+	} else {
+		// 2. Sample competitors (Unique Tournament & Hall of Fame Support)
+		tournament = make(Population[E, S], size)
+		if s.Unique {
+			selectedIndices := make(map[int]bool)
+			for i := 0; i < size; i++ {
+				if s.HallOfFame != nil && len(*s.HallOfFame) > 0 && rand.Float64() < s.HallOfFameProbability {
+					hof := *s.HallOfFame
+					tournament[i] = hof[rand.Intn(len(hof))]
+					continue
+				}
+
+				if len(selectedIndices) >= n {
+					tournament[i] = pop[rand.Intn(n)]
+					continue
+				}
+				for {
+					idx := rand.Intn(n)
+					if !selectedIndices[idx] {
+						selectedIndices[idx] = true
+						tournament[i] = pop[idx]
+						break
+					}
+				}
+			}
+		} else {
+			for i := 0; i < size; i++ {
+				if s.HallOfFame != nil && len(*s.HallOfFame) > 0 && rand.Float64() < s.HallOfFameProbability {
+					hof := *s.HallOfFame
+					tournament[i] = hof[rand.Intn(len(hof))]
+				} else {
+					tournament[i] = pop[rand.Intn(n)]
+				}
+			}
 		}
 	}
 
-	// 3. Fitness Sharing / Niching
+	// 3. Fitness Sharing / Niching / Age Bias
 	type ratedCompetitor struct {
 		ind         *Individual[E, S]
 		originalFit float64
@@ -233,6 +340,12 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 			if nicheCount > 0 {
 				competitors[i].adjustedFit = competitors[i].originalFit / nicheCount
 			}
+		}
+	}
+
+	if s.AgeBias != 0.0 {
+		for i := 0; i < size; i++ {
+			competitors[i].adjustedFit -= float64(competitors[i].ind.Age) * s.AgeBias
 		}
 	}
 
@@ -613,3 +726,288 @@ func (m DefaultMutator) Mutate(g Genome) Genome {
 		return CategoricalMutator{Probability: prob}.Mutate(genome)
 	}
 }
+
+// RouletteWheelSelector selects individuals proportional to their fitness.
+type RouletteWheelSelector[E any, S any] struct {
+	AutoShift bool // If true, shifts negative fitnesses so minimum is 0.
+}
+
+func (s RouletteWheelSelector[E, S]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[E, S]))
+}
+
+func (s RouletteWheelSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	fitnesses := make([]float64, n)
+	minFit := pop[0].Fitness
+	for i, ind := range pop {
+		fitnesses[i] = ind.Fitness
+		if ind.Fitness < minFit {
+			minFit = ind.Fitness
+		}
+	}
+
+	if s.AutoShift || minFit < 0 {
+		shift := 0.0
+		if minFit < 0 {
+			shift = -minFit
+		} else if s.AutoShift {
+			shift = minFit
+		}
+		shift += 0.0001
+		for i := range fitnesses {
+			fitnesses[i] += shift
+		}
+	}
+
+	sum := 0.0
+	for _, f := range fitnesses {
+		if f < 0 {
+			f = 0
+		}
+		sum += f
+	}
+
+	if sum <= 0 {
+		return pop[rand.Intn(n)]
+	}
+
+	r := rand.Float64() * sum
+	cumulative := 0.0
+	for i, f := range fitnesses {
+		if f < 0 {
+			f = 0
+		}
+		cumulative += f
+		if r <= cumulative {
+			return pop[i]
+		}
+	}
+
+	return pop[n-1]
+}
+
+// StochasticUniversalSamplingSelector uses a single spin to select multiple parents with minimal bias.
+type StochasticUniversalSamplingSelector[E any, S any] struct {
+	AutoShift bool
+	queue     *[]*Individual[E, S]
+}
+
+func (s StochasticUniversalSamplingSelector[E, S]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[E, S]))
+}
+
+func (s StochasticUniversalSamplingSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+
+	if s.queue == nil {
+		s.queue = &[]*Individual[E, S]{}
+	}
+
+	if len(*s.queue) == 0 {
+		s.fillQueue(pop)
+	}
+
+	if len(*s.queue) > 0 {
+		val := (*s.queue)[0]
+		*s.queue = (*s.queue)[1:]
+		return val
+	}
+
+	return pop[rand.Intn(n)]
+}
+
+func (s StochasticUniversalSamplingSelector[E, S]) fillQueue(pop Population[E, S]) {
+	n := len(pop)
+	if n == 0 {
+		return
+	}
+
+	fitnesses := make([]float64, n)
+	minFit := pop[0].Fitness
+	for i, ind := range pop {
+		fitnesses[i] = ind.Fitness
+		if ind.Fitness < minFit {
+			minFit = ind.Fitness
+		}
+	}
+
+	if s.AutoShift || minFit < 0 {
+		shift := 0.0
+		if minFit < 0 {
+			shift = -minFit
+		} else if s.AutoShift {
+			shift = minFit
+		}
+		shift += 0.0001
+		for i := range fitnesses {
+			fitnesses[i] += shift
+		}
+	}
+
+	sum := 0.0
+	for _, f := range fitnesses {
+		if f < 0 {
+			f = 0
+		}
+		sum += f
+	}
+
+	if sum <= 0 {
+		q := make([]*Individual[E, S], n)
+		for i := 0; i < n; i++ {
+			q[i] = pop[rand.Intn(n)]
+		}
+		*s.queue = q
+		return
+	}
+
+	ptrDistance := sum / float64(n)
+	start := rand.Float64() * ptrDistance
+
+	q := make([]*Individual[E, S], 0, n)
+	currSum := 0.0
+	idx := 0
+
+	for i := 0; i < n; i++ {
+		pointer := start + float64(i)*ptrDistance
+		for currSum < pointer && idx < n {
+			f := fitnesses[idx]
+			if f < 0 {
+				f = 0
+			}
+			currSum += f
+			if currSum >= pointer {
+				break
+			}
+			idx++
+			if idx >= n {
+				idx = n - 1
+				break
+			}
+		}
+		q = append(q, pop[idx])
+	}
+
+	*s.queue = q
+}
+
+// RankSelector selects individuals based on their fitness rank rather than absolute fitness.
+type RankSelector[E any, S any] struct {
+	SelectionPressure float64 // typically in [1.0, 2.0], defaults to 1.5 if <= 0
+}
+
+func (s RankSelector[E, S]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[E, S]))
+}
+
+func (s RankSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	sp := s.SelectionPressure
+	if sp <= 0 {
+		sp = 1.5
+	}
+	if sp < 1.0 {
+		sp = 1.0
+	}
+	if sp > 2.0 {
+		sp = 2.0
+	}
+
+	sortedPop := make(Population[E, S], n)
+	copy(sortedPop, pop)
+	sort.Slice(sortedPop, func(i, j int) bool {
+		return sortedPop[i].Fitness < sortedPop[j].Fitness
+	})
+
+	probs := make([]float64, n)
+	sum := 0.0
+	for i := 0; i < n; i++ {
+		p := (2.0 - sp) / float64(n) + (2.0 * float64(i) * (sp - 1.0)) / float64(n * (n - 1))
+		probs[i] = p
+		sum += p
+	}
+
+	r := rand.Float64() * sum
+	cumulative := 0.0
+	for i, p := range probs {
+		cumulative += p
+		if r <= cumulative {
+			return sortedPop[i]
+		}
+	}
+
+	return sortedPop[n-1]
+}
+
+// BoltzmannSelector selects individuals using a Boltzmann distribution with temperature.
+type BoltzmannSelector[E any, S any] struct {
+	Temperature float64 // Defaults to 1.0 if <= 0
+}
+
+func (s BoltzmannSelector[E, S]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[E, S]))
+}
+
+func (s BoltzmannSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	temp := s.Temperature
+	if temp <= 0 {
+		temp = 1.0
+	}
+
+	maxFit := pop[0].Fitness
+	for _, ind := range pop {
+		if ind.Fitness > maxFit {
+			maxFit = ind.Fitness
+		}
+	}
+
+	probs := make([]float64, n)
+	sum := 0.0
+	for i, ind := range pop {
+		val := math.Exp((ind.Fitness - maxFit) / temp)
+		probs[i] = val
+		sum += val
+	}
+
+	if sum <= 0 {
+		return pop[rand.Intn(n)]
+	}
+
+	r := rand.Float64() * sum
+	cumulative := 0.0
+	for i, p := range probs {
+		cumulative += p
+		if r <= cumulative {
+			return pop[i]
+		}
+	}
+
+	return pop[n-1]
+}
+

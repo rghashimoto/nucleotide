@@ -244,6 +244,9 @@ func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
 		}
 
 		e.Population = newPop
+		for _, ind := range e.Population {
+			ind.Age++
+		}
 		e.Generation++
 		e.evaluate()
 	}
