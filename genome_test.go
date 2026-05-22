@@ -34,23 +34,24 @@ func TestFloatGenome_Copy(t *testing.T) {
 
 func TestPopulation_Methods(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10},
-		{Fitness: 30},
-		{Fitness: 20},
+		{Fitness: []float64{10}},
+		{Fitness: []float64{30}},
+		{Fitness: []float64{20}},
 	}
-	if pop.Best().Fitness != 30 {
-		t.Errorf("Best() failed: got %f", pop.Best().Fitness)
+	if len(pop.Best().Fitness) == 0 || pop.Best().Fitness[0] != 30 {
+		t.Errorf("Best() failed: got %v", pop.Best().Fitness)
 	}
-	if pop.AverageFitness() != 20 {
-		t.Errorf("AverageFitness() failed: got %f", pop.AverageFitness())
+	avg := pop.AverageFitness()
+	if len(avg) == 0 || avg[0] != 20 {
+		t.Errorf("AverageFitness() failed: got %v", avg)
 	}
 	
 	empty := Population[TestEnv, struct{}]{}
 	if empty.Best() != nil {
 		t.Error("Best() on empty population should be nil")
 	}
-	if empty.AverageFitness() != 0 {
-		t.Error("AverageFitness() on empty population should be 0")
+	if empty.AverageFitness() != nil {
+		t.Error("AverageFitness() on empty population should be nil")
 	}
 }
 

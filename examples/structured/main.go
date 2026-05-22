@@ -29,13 +29,13 @@ func main() {
 	material.AddGene("Plastic", func(ctx nucleotide.Context[DummyEnv, struct{}]) { fmt.Print("Material:Plastic ") })
 
 	// 2. Define fitness function
-	fitnessFunc := func(g nucleotide.Genome, env DummyEnv) float64 {
+	fitnessFunc := func(g nucleotide.Genome, env DummyEnv) []float64 {
 		cg := g.(*nucleotide.CategoricalGenome[DummyEnv, struct{}])
 		score := 0.0
 		if cg.GeneIndices[1] == 0 { score += 1.0 }
 		if cg.GeneIndices[2] == 2 { score += 1.0 }
 		if cg.GeneIndices[3] == 1 { score += 1.0 }
-		return score
+		return []float64{score}
 	}
 
 	// 3. Initialize engine with automated population creation
@@ -58,7 +58,7 @@ func main() {
 	best, _ := engine.Run(def)
 
 	fmt.Printf("\nEvolution finished!\n")
-	fmt.Printf("Best individual fitness: %.1f/3.0\n", best.Fitness)
+	fmt.Printf("Best individual fitness: %.1f/3.0\n", best.Fitness[0])
 	fmt.Print("Expressed features: ")
 	best.Express(context.Background(), DummyEnv{})
 	fmt.Println()

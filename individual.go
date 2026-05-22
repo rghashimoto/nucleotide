@@ -9,10 +9,12 @@ import (
 
 // Individual represents a candidate solution in the population.
 type Individual[E any, S any] struct {
-	Genome  Genome
-	Fitness float64
-	State   S
-	Age     int
+	Genome           Genome
+	Fitness          []float64
+	State            S
+	Age              int
+	Rank             int
+	CrowdingDistance float64
 }
 
 // NewIndividual creates a new individual with the given genome.
@@ -137,23 +139,70 @@ func (p Population[E, S]) Best() *Individual[E, S] {
 	if len(p) == 0 {
 		return nil
 	}
+
+	// If ranks have been calculated (multi-objective mode), find Rank 0 with highest CrowdingDistance
+	hasRanks := false
+	for _, ind := range p {
+		if ind.Rank != 0 {
+			hasRanks = true
+			break
+		}
+	}
+
+	if hasRanks {
+		var best *Individual[E, S]
+		for _, ind := range p {
+			if ind.Rank == 0 {
+				if best == nil || ind.CrowdingDistance > best.CrowdingDistance {
+					best = ind
+				}
+			}
+		}
+		if best != nil {
+			return best
+		}
+	}
+
+	// Fallback to highest Fitness[0]
 	best := p[0]
 	for _, ind := range p[1:] {
-		if ind.Fitness > best.Fitness {
+		var indFit, bestFit float64
+		if len(ind.Fitness) > 0 {
+			indFit = ind.Fitness[0]
+		}
+		if len(best.Fitness) > 0 {
+			bestFit = best.Fitness[0]
+		}
+		if indFit > bestFit {
 			best = ind
 		}
 	}
 	return best
 }
 
-// AverageFitness returns the average fitness.
-func (p Population[E, S]) AverageFitness() float64 {
+// AverageFitness returns the average fitness for each objective.
+func (p Population[E, S]) AverageFitness() []float64 {
 	if len(p) == 0 {
-		return 0
+		return nil
 	}
-	var total float64
+
+	numObjectives := len(p[0].Fitness)
+	if numObjectives == 0 {
+		return nil
+	}
+
+	averages := make([]float64, numObjectives)
 	for _, ind := range p {
-		total += ind.Fitness
+		for i := 0; i < numObjectives; i++ {
+			if i < len(ind.Fitness) {
+				averages[i] += ind.Fitness[i]
+			}
+		}
 	}
-	return total / float64(len(p))
+
+	for i := range averages {
+		averages[i] /= float64(len(p))
+	}
+
+	return averages
 }

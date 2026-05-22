@@ -70,6 +70,44 @@ The built-in tournament selector can be enhanced using several advanced, fully o
 - **Hall of Fame competitor mixing**: Integrates historical elite individuals into active tournaments with a specified `HallOfFameProbability` to encourage competition.
 - **Self-Adaptive Sizing**: Individuals can adaptively define their preferred tournament sizing (`TournamentSize`) through parameter genes or custom state interfaces implementing `SelfAdaptiveIndividual`.
 
+## Multi-Objective Optimization (NSGA-II)
+
+Nucleotide supports state-of-the-art **Multi-Objective Optimization** using the **NSGA-II (Nondominated Sorting Genetic Algorithm II)** algorithm out-of-the-box. This is ideal when you need to optimize conflicting metrics in tension, such as maximizing performance/throughput while minimizing cost/power consumption.
+
+### Key NSGA-II Features:
+- **Unified Fitness Signature**: Fitness is represented as `[]float64` to transparently scale from single-objective (length 1) to multi-objective environments.
+- **Configurable Directions**: Define whether to `Maximize` or `Minimize` each objective independently via `ObjectiveDirections []ObjectiveDirection`.
+- **Fast Non-Dominated Sorting**: Classifies individuals into sequential Pareto frontiers ($F_1, F_2, \dots$) based on mathematical dominance.
+- **Crowding Distance & Density Calculation**: Scans boundary points and computes sparsity metrics to favor diverse, well-distributed solutions across the Pareto frontier.
+- **Crowded Comparison Operator Selection**: The `GenericTournamentSelector` automatically applies rank-based and crowding-distance-based tournament selection when running in multi-objective mode.
+- **Pareto Frontier Access**: Retrieve the best non-dominated solutions of a finished run via `engine.ParetoFrontier()`.
+
+### Code Example:
+```go
+config := nucleotide.EngineConfig[MyEnv, MyState]{
+    PopulationSize: 100,
+    MaxGenerations: 50,
+    FitnessFunc: func(g nucleotide.Genome, env MyEnv) []float64 {
+        // Return multiple fitness scores
+        return []float64{performance, cost}
+    },
+    Selector: nucleotide.GenericTournamentSelector[MyEnv, MyState]{Size: 3},
+    
+    // Objective 0: Maximize performance
+    // Objective 1: Minimize cost
+    ObjectiveDirections: []nucleotide.ObjectiveDirection{
+        nucleotide.Maximize,
+        nucleotide.Minimize,
+    },
+}
+
+engine, _ := nucleotide.NewEngine(config)
+engine.Run(def)
+
+// Retrieve the optimal trade-offs (Rank 0 non-dominated solutions)
+paretoFrontier := engine.ParetoFrontier()
+```
+
 ## Installation
 
 ```bash
@@ -92,6 +130,11 @@ Use Categorical Genomes to select the best combination of components or traits f
 Evolve agents that interact with a dynamic environment. Genes are functions that consume resources or change the state of the world.
 - **Example**: [advanced/main.go](file:///C:/Users/rafae/Desktop/golang/nucleotide/examples/advanced/main.go)
 - **Goal**: Evolve a survival strategy (Glutton vs. Frugal) in a world with limited food.
+
+### 4. Multi-Objective Optimization (NSGA-II)
+Solve complex problems where multiple conflicting objectives must be optimized simultaneously (e.g. maximizing value while minimizing weight).
+- **Example**: [multiobjective/main.go](file:///C:/Users/rafae/Desktop/golang/nucleotide/examples/multiobjective/main.go)
+- **Goal**: Find the non-dominated Pareto Frontier trade-offs for a dual-objective Knapsack problem.
 
 ## Customization & Extensibility
 

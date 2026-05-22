@@ -13,8 +13,8 @@ func TestEngine_Run_Categorical(t *testing.T) {
 	config := EngineConfig[TestEnv, struct{}]{
 		PopulationSize: 10,
 		MaxGenerations: 2,
-		FitnessFunc: func(g Genome, env TestEnv) float64 {
-			return 1.0
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
 		},
 		Selector:     GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
 		Crossoverers: []Crossoverer{SinglePointCrossover{}},
@@ -109,8 +109,8 @@ func TestNewEngine_DefaultFallbacks(t *testing.T) {
 	config := EngineConfig[TestEnv, struct{}]{
 		PopulationSize: 10,
 		MaxGenerations: 2,
-		FitnessFunc: func(g Genome, env TestEnv) float64 {
-			return 1.0
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
 		},
 	}
 	engine, err := NewEngine[TestEnv, struct{}](config)
@@ -147,8 +147,8 @@ func TestEngine_RoundRobinOperators(t *testing.T) {
 	config := EngineConfig[TestEnv, struct{}]{
 		PopulationSize: 10,
 		MaxGenerations: 2,
-		FitnessFunc: func(g Genome, env TestEnv) float64 {
-			return 1.0
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
 		},
 		Crossoverers: []Crossoverer{
 			MockCrossoverer{id: 1},
@@ -190,8 +190,8 @@ func TestEngine_WeightedOperators(t *testing.T) {
 	config := EngineConfig[TestEnv, struct{}]{
 		PopulationSize: 10,
 		MaxGenerations: 2,
-		FitnessFunc: func(g Genome, env TestEnv) float64 {
-			return 1.0
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
 		},
 		Crossoverers: []Crossoverer{
 			MockCrossoverer{id: 1},
@@ -252,9 +252,9 @@ func TestEngine_WeightedOperators(t *testing.T) {
 
 func TestElitism_TopN(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10, Genome: BitGenome{false}},
-		{Fitness: 30, Genome: BitGenome{true}},
-		{Fitness: 20, Genome: BitGenome{false}},
+		{Fitness: []float64{10}, Genome: BitGenome{false}},
+		{Fitness: []float64{30}, Genome: BitGenome{true}},
+		{Fitness: []float64{20}, Genome: BitGenome{false}},
 	}
 	elites := TopNElitism(pop, 2)
 	if len(elites) != 2 {

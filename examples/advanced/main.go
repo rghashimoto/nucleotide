@@ -51,7 +51,7 @@ func main() {
 	})
 
 	// 2. Define fitness function
-	fitnessFunc := func(g nucleotide.Genome, env *World) float64 {
+	fitnessFunc := func(g nucleotide.Genome, env *World) []float64 {
 		cg := g.(*nucleotide.CategoricalGenome[*World, AgentState])
 		localEnv := &World{FoodAvailable: env.FoodAvailable}
 		ind := nucleotide.NewIndividual[*World, AgentState](cg)
@@ -69,7 +69,7 @@ func main() {
 		if cg.GeneIndices[1] == 1 {
 			score += 10.0
 		}
-		return score
+		return []float64{score}
 	}
 
 	// 3. Initialize engine
@@ -92,7 +92,7 @@ func main() {
 	best, _ := engine.Run(def)
 
 	fmt.Printf("\nEvolution finished!\n")
-	fmt.Printf("Best individual fitness: %.1f\n", best.Fitness)
+	fmt.Printf("Best individual fitness: %.1f\n", best.Fitness[0])
 	
 	// 5. Save the winner for production
 	filename := "best_genome.json"

@@ -41,7 +41,7 @@ type Gene[E any, S any] struct {
 	Value    interface{}
 }
 
-// Locus represents a specific position in the genome.
+// Locus represents a specific position in the genome. Note: "Loci" (pronounced lo-sigh) is the plural form of "Locus".
 type Locus[E any, S any] struct {
 	ID            string
 	Type          LocusType
@@ -64,7 +64,7 @@ func (l *Locus[E, S]) AddConfigGene(id string, value interface{}) {
 	l.PossibleGenes = append(l.PossibleGenes, Gene[E, S]{ID: id, Value: value})
 }
 
-// Definition defines the structure of the genome (the set of loci).
+// Definition defines the structure of the genome (the set of loci). Note: "Loci" is the plural form of "Locus".
 type Definition[E any, S any] struct {
 	Loci []*Locus[E, S]
 }

@@ -6,8 +6,16 @@ import (
 	"sort"
 )
 
-// FitnessFunc defines how to evaluate an individual's fitness, with access to the environment.
-type FitnessFunc[E any, S any] func(g Genome, env E) float64
+// FitnessFunc defines how to evaluate an individual's fitness across one or more objectives, with access to the environment.
+type FitnessFunc[E any, S any] func(g Genome, env E) []float64
+
+// ObjectiveDirection represents the optimization direction for a single objective.
+type ObjectiveDirection int
+
+const (
+	Maximize ObjectiveDirection = iota
+	Minimize
+)
 
 // ElitismFunc defines the strategy for carrying over individuals to the next generation.
 type ElitismFunc[E any, S any] func(pop Population[E, S], size int) Population[E, S]
@@ -29,7 +37,14 @@ func TopNElitism[E any, S any](pop Population[E, S], size int) Population[E, S] 
 	sortedPop := make(Population[E, S], len(pop))
 	copy(sortedPop, pop)
 	sort.Slice(sortedPop, func(i, j int) bool {
-		return sortedPop[i].Fitness > sortedPop[j].Fitness
+		var f1, f2 float64
+		if len(sortedPop[i].Fitness) > 0 {
+			f1 = sortedPop[i].Fitness[0]
+		}
+		if len(sortedPop[j].Fitness) > 0 {
+			f2 = sortedPop[j].Fitness[0]
+		}
+		return f1 > f2
 	})
 
 	if size > len(sortedPop) {
@@ -55,8 +70,10 @@ type EngineConfig[E any, S any] struct {
 	MutatorWeights     []float64
 	Elitism            int
 	ElitismFunc        ElitismFunc[E, S]
-	PopulationFunc     PopulationFunc[E, S] // User can provide their own
+	PopulationFunc     PopulationFunc[E, S]
 	Env                E
+	ObjectiveDirections []ObjectiveDirection
+	Strategy           GenerationStrategy[E, S]
 }
 
 // Engine orchestrates the genetic algorithm process.
@@ -130,9 +147,24 @@ func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
 		config.PopulationFunc = DefaultPopulationFunc[E, S]
 	}
 
-	return &Engine[E, S]{
+	// Auto-deduce strategy if nil
+	if config.Strategy == nil {
+		if len(config.ObjectiveDirections) > 1 {
+			config.Strategy = &NSGA2Generation[E, S]{}
+		} else {
+			config.Strategy = &StandardGeneration[E, S]{}
+		}
+	}
+
+	e := &Engine[E, S]{
 		Config: config,
-	}, nil
+	}
+
+	if err := e.Config.Strategy.Initialize(e); err != nil {
+		return nil, err
+	}
+
+	return e, nil
 }
 
 func (e *Engine[E, S]) selectCrossoverer() Crossoverer {
@@ -208,39 +240,17 @@ func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
 	e.evaluate()
 
 	for e.Generation < e.Config.MaxGenerations {
-		fmt.Printf("Generation %d: Best Fitness = %.4f, Avg Fitness = %.4f\n",
-			e.Generation, e.Population.Best().Fitness, e.Population.AverageFitness())
-
-		newPop := make(Population[E, S], 0, e.Config.PopulationSize)
-
-		// Elitism
-		if e.Config.ElitismFunc != nil && e.Config.Elitism > 0 {
-			elites := e.Config.ElitismFunc(e.Population, e.Config.Elitism)
-			newPop = append(newPop, elites...)
+		best := e.Population.Best()
+		var bestFit []float64
+		if best != nil {
+			bestFit = best.Fitness
 		}
+		fmt.Printf("Generation %d: Best Fitness = %v, Avg Fitness = %v\n",
+			e.Generation, bestFit, e.Population.AverageFitness())
 
-		// Fill the rest of the population
-		for len(newPop) < e.Config.PopulationSize {
-			p1 := e.Config.Selector.Select(e.Population).(*Individual[E, S])
-			p2 := e.Config.Selector.Select(e.Population).(*Individual[E, S])
-
-			cross := e.selectCrossoverer()
-			mut1 := e.selectMutator()
-			mut2 := e.selectMutator()
-
-			off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
-
-			off1G = mut1.Mutate(off1G)
-			off2G = mut2.Mutate(off2G)
-
-			newPop = append(newPop, NewIndividual[E, S](off1G))
-			if len(newPop) < e.Config.PopulationSize {
-				newPop = append(newPop, NewIndividual[E, S](off2G))
-			}
-		}
-
-		if len(newPop) > e.Config.PopulationSize {
-			newPop = newPop[:e.Config.PopulationSize]
+		newPop, err := e.Config.Strategy.NextGeneration(e, def, e.Population)
+		if err != nil {
+			return nil, err
 		}
 
 		e.Population = newPop
@@ -252,6 +262,25 @@ func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
 	}
 
 	return e.Population.Best(), nil
+}
+
+// ParetoFrontier returns all non-dominated individuals from the current population (Rank == 0).
+func (e *Engine[E, S]) ParetoFrontier() Population[E, S] {
+	if len(e.Population) == 0 {
+		return nil
+	}
+
+	// Perform fast non-dominated sort to ensure ranks are computed/up to date
+	fronts := fastNondominatedSort(e.Population, e.Config.ObjectiveDirections)
+	if len(fronts) == 0 {
+		return nil
+	}
+
+	frontier := make(Population[E, S], 0, len(fronts[0]))
+	for _, idx := range fronts[0] {
+		frontier = append(frontier, e.Population[idx])
+	}
+	return frontier
 }
 
 func (e *Engine[E, S]) evaluate() {

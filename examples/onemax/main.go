@@ -14,7 +14,7 @@ func main() {
 	genomeSize := 50
 	maxGens := 50
 
-	fitnessFunc := func(g nucleotide.Genome, env EmptyEnv) float64 {
+	fitnessFunc := func(g nucleotide.Genome, env EmptyEnv) []float64 {
 		bg := g.(nucleotide.BitGenome)
 		count := 0
 		for _, b := range bg {
@@ -22,7 +22,7 @@ func main() {
 				count++
 			}
 		}
-		return float64(count)
+		return []float64{float64(count)}
 	}
 
 	initialPop := make(nucleotide.Population[EmptyEnv, struct{}], popSize)
@@ -53,5 +53,5 @@ func main() {
 	best, _ := engine.Run(nil)
 
 	fmt.Printf("\nEvolution finished!\n")
-	fmt.Printf("Best individual fitness: %.2f/%d\n", best.Fitness, genomeSize)
+	fmt.Printf("Best individual fitness: %.2f/%d\n", best.Fitness[0], genomeSize)
 }

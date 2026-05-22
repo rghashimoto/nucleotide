@@ -185,13 +185,21 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 	} else if s.AdaptiveDiversity && n > 1 {
 		var total float64
 		for _, ind := range pop {
-			total += ind.Fitness
+			var fit float64
+			if len(ind.Fitness) > 0 {
+				fit = ind.Fitness[0]
+			}
+			total += fit
 		}
 		avg := total / float64(n)
 
 		var varianceSum float64
 		for _, ind := range pop {
-			diff := ind.Fitness - avg
+			var fit float64
+			if len(ind.Fitness) > 0 {
+				fit = ind.Fitness[0]
+			}
+			diff := fit - avg
 			varianceSum += diff * diff
 		}
 		stdDev := math.Sqrt(varianceSum / float64(n))
@@ -305,6 +313,11 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 	}
 
 	// 3. Fitness Sharing / Niching / Age Bias
+	isMultiObjective := false
+	if n > 0 && len(pop[0].Fitness) > 1 {
+		isMultiObjective = true
+	}
+
 	type ratedCompetitor struct {
 		ind         *Individual[E, S]
 		originalFit float64
@@ -312,48 +325,65 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 	}
 	competitors := make([]ratedCompetitor, size)
 	for i, ind := range tournament {
+		var fit float64
+		if len(ind.Fitness) > 0 {
+			fit = ind.Fitness[0]
+		}
 		competitors[i] = ratedCompetitor{
 			ind:         ind,
-			originalFit: ind.Fitness,
-			adjustedFit: ind.Fitness,
+			originalFit: fit,
+			adjustedFit: fit,
 		}
 	}
 
-	if s.SigmaShare > 0 {
-		alpha := s.NichingAlpha
-		if alpha <= 0 {
-			alpha = 1.0
-		}
-		distFunc := s.DistanceFunc
-		if distFunc == nil {
-			distFunc = defaultGenomeDistance
-		}
+	if isMultiObjective {
+		// Sort competitors using the Crowded Comparison Operator (<_c)
+		sort.Slice(competitors, func(i, j int) bool {
+			indI := competitors[i].ind
+			indJ := competitors[j].ind
+			if indI.Rank != indJ.Rank {
+				return indI.Rank < indJ.Rank
+			}
+			return indI.CrowdingDistance > indJ.CrowdingDistance
+		})
+	} else {
+		if s.SigmaShare > 0 {
+			alpha := s.NichingAlpha
+			if alpha <= 0 {
+				alpha = 1.0
+			}
+			distFunc := s.DistanceFunc
+			if distFunc == nil {
+				distFunc = defaultGenomeDistance
+			}
 
-		for i := 0; i < size; i++ {
-			nicheCount := 0.0
-			for j := 0; j < size; j++ {
-				dist := distFunc(competitors[i].ind.Genome, competitors[j].ind.Genome)
-				if dist < s.SigmaShare {
-					nicheCount += 1.0 - math.Pow(dist/s.SigmaShare, alpha)
+			for i := 0; i < size; i++ {
+				nicheCount := 0.0
+				for j := 0; j < size; j++ {
+					dist := distFunc(competitors[i].ind.Genome, competitors[j].ind.Genome)
+					if dist < s.SigmaShare {
+						nicheCount += 1.0 - math.Pow(dist/s.SigmaShare, alpha)
+					}
+				}
+				if nicheCount > 0 {
+					competitors[i].adjustedFit = competitors[i].originalFit / nicheCount
 				}
 			}
-			if nicheCount > 0 {
-				competitors[i].adjustedFit = competitors[i].originalFit / nicheCount
+		}
+
+		if s.AgeBias != 0.0 {
+			for i := 0; i < size; i++ {
+				competitors[i].adjustedFit -= float64(competitors[i].ind.Age) * s.AgeBias
 			}
 		}
-	}
 
-	if s.AgeBias != 0.0 {
-		for i := 0; i < size; i++ {
-			competitors[i].adjustedFit -= float64(competitors[i].ind.Age) * s.AgeBias
-		}
+		// Sort by adjusted fitness descending
+		sort.Slice(competitors, func(i, j int) bool {
+			return competitors[i].adjustedFit > competitors[j].adjustedFit
+		})
 	}
 
 	// 4. Selection (Probabilistic Selection Support)
-	sort.Slice(competitors, func(i, j int) bool {
-		return competitors[i].adjustedFit > competitors[j].adjustedFit
-	})
-
 	if s.Probability > 0 && s.Probability < 1.0 {
 		for i := 0; i < size; i++ {
 			if rand.Float64() < s.Probability {
@@ -746,11 +776,18 @@ func (s RouletteWheelSelector[E, S]) SelectTyped(pop Population[E, S]) *Individu
 	}
 
 	fitnesses := make([]float64, n)
-	minFit := pop[0].Fitness
+	var minFit float64
+	if len(pop[0].Fitness) > 0 {
+		minFit = pop[0].Fitness[0]
+	}
 	for i, ind := range pop {
-		fitnesses[i] = ind.Fitness
-		if ind.Fitness < minFit {
-			minFit = ind.Fitness
+		var fit float64
+		if len(ind.Fitness) > 0 {
+			fit = ind.Fitness[0]
+		}
+		fitnesses[i] = fit
+		if fit < minFit {
+			minFit = fit
 		}
 	}
 
@@ -834,11 +871,18 @@ func (s StochasticUniversalSamplingSelector[E, S]) fillQueue(pop Population[E, S
 	}
 
 	fitnesses := make([]float64, n)
-	minFit := pop[0].Fitness
+	var minFit float64
+	if len(pop[0].Fitness) > 0 {
+		minFit = pop[0].Fitness[0]
+	}
 	for i, ind := range pop {
-		fitnesses[i] = ind.Fitness
-		if ind.Fitness < minFit {
-			minFit = ind.Fitness
+		var fit float64
+		if len(ind.Fitness) > 0 {
+			fit = ind.Fitness[0]
+		}
+		fitnesses[i] = fit
+		if fit < minFit {
+			minFit = fit
 		}
 	}
 
@@ -934,7 +978,14 @@ func (s RankSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] 
 	sortedPop := make(Population[E, S], n)
 	copy(sortedPop, pop)
 	sort.Slice(sortedPop, func(i, j int) bool {
-		return sortedPop[i].Fitness < sortedPop[j].Fitness
+		var f1, f2 float64
+		if len(sortedPop[i].Fitness) > 0 {
+			f1 = sortedPop[i].Fitness[0]
+		}
+		if len(sortedPop[j].Fitness) > 0 {
+			f2 = sortedPop[j].Fitness[0]
+		}
+		return f1 < f2
 	})
 
 	probs := make([]float64, n)
@@ -980,17 +1031,28 @@ func (s BoltzmannSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E
 		temp = 1.0
 	}
 
-	maxFit := pop[0].Fitness
+	var maxFit float64
+	if len(pop[0].Fitness) > 0 {
+		maxFit = pop[0].Fitness[0]
+	}
 	for _, ind := range pop {
-		if ind.Fitness > maxFit {
-			maxFit = ind.Fitness
+		var fit float64
+		if len(ind.Fitness) > 0 {
+			fit = ind.Fitness[0]
+		}
+		if fit > maxFit {
+			maxFit = fit
 		}
 	}
 
 	probs := make([]float64, n)
 	sum := 0.0
 	for i, ind := range pop {
-		val := math.Exp((ind.Fitness - maxFit) / temp)
+		var fit float64
+		if len(ind.Fitness) > 0 {
+			fit = ind.Fitness[0]
+		}
+		val := math.Exp((fit - maxFit) / temp)
 		probs[i] = val
 		sum += val
 	}

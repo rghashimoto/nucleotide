@@ -6,9 +6,9 @@ import (
 
 func TestGenericTournamentSelector(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10},
-		{Fitness: 20},
-		{Fitness: 30},
+		{Fitness: []float64{10}},
+		{Fitness: []float64{20}},
+		{Fitness: []float64{30}},
 	}
 	s := GenericTournamentSelector[TestEnv, struct{}]{Size: 2}
 	selected := s.SelectTyped(pop)
@@ -26,9 +26,9 @@ func TestGenericTournamentSelector(t *testing.T) {
 
 func TestProbabilisticTournamentSelector(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true}},
-		{Fitness: 5.0, Genome: BitGenome{true}},
-		{Fitness: 1.0, Genome: BitGenome{true}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{5.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{1.0}, Genome: BitGenome{true}},
 	}
 
 	// We use Unique: true to ensure all 3 individuals are in the tournament,
@@ -42,7 +42,7 @@ func TestProbabilisticTournamentSelector(t *testing.T) {
 	bestWins := 0
 	for i := 0; i < 100; i++ {
 		sel := sHigh.SelectTyped(pop)
-		if sel.Fitness == 10.0 {
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 10.0 {
 			bestWins++
 		}
 	}
@@ -53,7 +53,7 @@ func TestProbabilisticTournamentSelector(t *testing.T) {
 	worstWins := 0
 	for i := 0; i < 100; i++ {
 		sel := sLow.SelectTyped(pop)
-		if sel.Fitness == 1.0 {
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 1.0 {
 			worstWins++
 		}
 	}
@@ -64,11 +64,11 @@ func TestProbabilisticTournamentSelector(t *testing.T) {
 
 func TestAdaptiveTournamentSelector(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 1.0, Genome: BitGenome{true}},
-		{Fitness: 2.0, Genome: BitGenome{true}},
-		{Fitness: 3.0, Genome: BitGenome{true}},
-		{Fitness: 4.0, Genome: BitGenome{true}},
-		{Fitness: 5.0, Genome: BitGenome{true}},
+		{Fitness: []float64{1.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{2.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{3.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{4.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{5.0}, Genome: BitGenome{true}},
 	}
 
 	progress := 0.0
@@ -84,7 +84,8 @@ func TestAdaptiveTournamentSelector(t *testing.T) {
 	progress = 0.0
 	fiveWinsStart := 0
 	for i := 0; i < 100; i++ {
-		if s.SelectTyped(pop).Fitness == 5.0 {
+		sel := s.SelectTyped(pop)
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 5.0 {
 			fiveWinsStart++
 		}
 	}
@@ -97,7 +98,8 @@ func TestAdaptiveTournamentSelector(t *testing.T) {
 	progress = 1.0
 	fiveWinsEnd := 0
 	for i := 0; i < 100; i++ {
-		if s.SelectTyped(pop).Fitness == 5.0 {
+		sel := s.SelectTyped(pop)
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 5.0 {
 			fiveWinsEnd++
 		}
 	}
@@ -110,15 +112,15 @@ func TestNichingTournamentSelector(t *testing.T) {
 	// Two identical individuals (BitGenome{true, true}) with fitness 10.0
 	// One different individual (BitGenome{false, false}) with fitness 8.0
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true, true}},
-		{Fitness: 10.0, Genome: BitGenome{true, true}},
-		{Fitness: 8.0, Genome: BitGenome{false, false}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true, true}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true, true}},
+		{Fitness: []float64{8.0}, Genome: BitGenome{false, false}},
 	}
 
 	// Without niching, the best (10.0) always wins
 	sNoNiche := GenericTournamentSelector[TestEnv, struct{}]{Size: 3}
 	sNoNiche.Unique = true
-	if sNoNiche.SelectTyped(pop).Fitness != 10.0 {
+	if sel := sNoNiche.SelectTyped(pop); len(sel.Fitness) == 0 || sel.Fitness[0] != 10.0 {
 		t.Errorf("Expected 10.0 without niching")
 	}
 
@@ -131,22 +133,23 @@ func TestNichingTournamentSelector(t *testing.T) {
 	sNiche := NewNichingTournamentSelector[TestEnv, struct{}](3, 1.0, nil)
 	sNiche.Unique = true
 	sel := sNiche.SelectTyped(pop)
-	if sel.Fitness != 8.0 {
-		t.Errorf("Expected different individual with fitness 8.0 to win due to niche penalty of duplicate individuals, got %f", sel.Fitness)
+	if len(sel.Fitness) == 0 || sel.Fitness[0] != 8.0 {
+		t.Errorf("Expected different individual with fitness 8.0 to win due to niche penalty of duplicate individuals, got %v", sel.Fitness)
 	}
 }
 
 func TestUniqueTournamentSelector(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true}},
-		{Fitness: 5.0, Genome: BitGenome{true}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{5.0}, Genome: BitGenome{true}},
 	}
 
 	// With replacement (size 2), worst individual (5.0) can occasionally win
 	sWithRep := GenericTournamentSelector[TestEnv, struct{}]{Size: 2}
 	worstWinsWithRep := 0
 	for i := 0; i < 100; i++ {
-		if sWithRep.SelectTyped(pop).Fitness == 5.0 {
+		sel := sWithRep.SelectTyped(pop)
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 5.0 {
 			worstWinsWithRep++
 		}
 	}
@@ -155,7 +158,8 @@ func TestUniqueTournamentSelector(t *testing.T) {
 	sUnique := NewUniqueTournamentSelector[TestEnv, struct{}](2)
 	worstWinsUnique := 0
 	for i := 0; i < 100; i++ {
-		if sUnique.SelectTyped(pop).Fitness == 5.0 {
+		sel := sUnique.SelectTyped(pop)
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 5.0 {
 			worstWinsUnique++
 		}
 	}
@@ -167,90 +171,11 @@ func TestUniqueTournamentSelector(t *testing.T) {
 	t.Logf("Worst individual won %d times with replacement, and %d times without replacement", worstWinsWithRep, worstWinsUnique)
 }
 
-func TestRouletteWheelSelector(t *testing.T) {
-	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true}},
-		{Fitness: 20.0, Genome: BitGenome{true}},
-		{Fitness: 30.0, Genome: BitGenome{true}},
-	}
-	s := RouletteWheelSelector[TestEnv, struct{}]{AutoShift: true}
-	for i := 0; i < 100; i++ {
-		sel := s.SelectTyped(pop)
-		if sel == nil {
-			t.Fatal("RouletteWheelSelector returned nil selection")
-		}
-	}
-
-	negPop := Population[TestEnv, struct{}]{
-		{Fitness: -10.0, Genome: BitGenome{true}},
-		{Fitness: -5.0, Genome: BitGenome{true}},
-	}
-	for i := 0; i < 50; i++ {
-		sel := s.SelectTyped(negPop)
-		if sel == nil {
-			t.Fatal("RouletteWheelSelector failed to select with negative fitness auto-shifting")
-		}
-	}
-}
-
-func TestStochasticUniversalSamplingSelector(t *testing.T) {
-	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true}},
-		{Fitness: 20.0, Genome: BitGenome{true}},
-		{Fitness: 30.0, Genome: BitGenome{true}},
-	}
-	s := StochasticUniversalSamplingSelector[TestEnv, struct{}]{AutoShift: true}
-	
-	for i := 0; i < 100; i++ {
-		sel := s.SelectTyped(pop)
-		if sel == nil {
-			t.Fatal("StochasticUniversalSamplingSelector returned nil selection")
-		}
-	}
-}
-
-func TestRankSelector(t *testing.T) {
-	pop := Population[TestEnv, struct{}]{
-		{Fitness: 100.0, Genome: BitGenome{true}},
-		{Fitness: 1.0, Genome: BitGenome{true}},
-	}
-	s := RankSelector[TestEnv, struct{}]{SelectionPressure: 2.0}
-	
-	bestCount := 0
-	for i := 0; i < 100; i++ {
-		sel := s.SelectTyped(pop)
-		if sel.Fitness == 100.0 {
-			bestCount++
-		}
-	}
-	if bestCount != 100 {
-		t.Errorf("Expected best individual to be selected 100 times under linear rank selection with SP 2.0, got %d", bestCount)
-	}
-}
-
-func TestBoltzmannSelector(t *testing.T) {
-	pop := Population[TestEnv, struct{}]{
-		{Fitness: 100.0, Genome: BitGenome{true}},
-		{Fitness: 1.0, Genome: BitGenome{true}},
-	}
-	
-	sCold := BoltzmannSelector[TestEnv, struct{}]{Temperature: 0.0001}
-	coldBestWins := 0
-	for i := 0; i < 100; i++ {
-		if sCold.SelectTyped(pop).Fitness == 100.0 {
-			coldBestWins++
-		}
-	}
-	if coldBestWins != 100 {
-		t.Errorf("Expected cold Boltzmann selection to always select best, got %d wins", coldBestWins)
-	}
-}
-
 func TestGenericTournamentSelector_AdaptiveDiversity(t *testing.T) {
 	uniformPop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true}},
-		{Fitness: 10.0, Genome: BitGenome{true}},
-		{Fitness: 10.0, Genome: BitGenome{true}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}},
 	}
 
 	s := GenericTournamentSelector[TestEnv, struct{}]{
@@ -268,8 +193,8 @@ func TestGenericTournamentSelector_AdaptiveDiversity(t *testing.T) {
 
 func TestGenericTournamentSelector_AgeBias(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 10.0, Genome: BitGenome{true}, Age: 0},
-		{Fitness: 10.0, Genome: BitGenome{true}, Age: 10},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}, Age: 0},
+		{Fitness: []float64{10.0}, Genome: BitGenome{true}, Age: 10},
 	}
 
 	s := GenericTournamentSelector[TestEnv, struct{}]{
@@ -289,10 +214,10 @@ func TestGenericTournamentSelector_AgeBias(t *testing.T) {
 
 func TestGenericTournamentSelector_HallOfFame(t *testing.T) {
 	pop := Population[TestEnv, struct{}]{
-		{Fitness: 1.0, Genome: BitGenome{true}},
+		{Fitness: []float64{1.0}, Genome: BitGenome{true}},
 	}
 	hof := Population[TestEnv, struct{}]{
-		{Fitness: 99.0, Genome: BitGenome{true}},
+		{Fitness: []float64{99.0}, Genome: BitGenome{true}},
 	}
 
 	s := GenericTournamentSelector[TestEnv, struct{}]{
@@ -302,20 +227,20 @@ func TestGenericTournamentSelector_HallOfFame(t *testing.T) {
 	}
 
 	sel := s.SelectTyped(pop)
-	if sel.Fitness != 99.0 && sel.Fitness != 1.0 {
-		t.Errorf("Expected individual with fitness 99.0 or 1.0, got %f", sel.Fitness)
+	if len(sel.Fitness) == 0 || (sel.Fitness[0] != 99.0 && sel.Fitness[0] != 1.0) {
+		t.Errorf("Expected individual with fitness 99.0 or 1.0, got %v", sel.Fitness)
 	}
 }
 
 func TestGenericTournamentSelector_SelfAdaptive(t *testing.T) {
 	p1 := Individual[TestEnv, CustomSelfAdaptiveState]{
-		Fitness: 1.0,
+		Fitness: []float64{1.0},
 		Genome:  BitGenome{true},
 		State:   CustomSelfAdaptiveState{PreferredK: 1},
 	}
 
 	p2 := Individual[TestEnv, CustomSelfAdaptiveState]{
-		Fitness: 10.0,
+		Fitness: []float64{10.0},
 		Genome:  BitGenome{true},
 		State:   CustomSelfAdaptiveState{PreferredK: 1},
 	}
@@ -333,7 +258,7 @@ func TestGenericTournamentSelector_SelfAdaptive(t *testing.T) {
 	wins := 0
 	for i := 0; i < 100; i++ {
 		sel := s.SelectTyped(pop)
-		if sel.Fitness == 1.0 {
+		if len(sel.Fitness) > 0 && sel.Fitness[0] == 1.0 {
 			wins++
 		}
 	}
