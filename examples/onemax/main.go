@@ -35,14 +35,15 @@ func main() {
 	}
 
 	config := nucleotide.EngineConfig[EmptyEnv, struct{}]{
-		PopulationSize: popSize,
-		MaxGenerations: maxGens,
-		FitnessFunc:    fitnessFunc,
-		Selector:       nucleotide.GenericTournamentSelector[EmptyEnv, struct{}]{Size: 3},
-		Crossoverers:   []nucleotide.WeightedCrossoverer{{Crossoverer: nucleotide.SinglePointCrossover{}}},
-		Mutators:       []nucleotide.WeightedMutator{{Mutator: nucleotide.BitFlipMutator{Probability: 0.01}}},
-		Elitism:        1,
-		Env:            EmptyEnv{},
+		PopulationSize:    popSize,
+		MaxGenerations:    maxGens,
+		FitnessFunc:       fitnessFunc,
+		Selector:          nucleotide.GenericTournamentSelector[EmptyEnv, struct{}]{Size: 3},
+		Crossoverers:      []nucleotide.WeightedCrossoverer{{Crossoverer: nucleotide.SinglePointCrossover{}}},
+		Mutators:          []nucleotide.WeightedMutator{{Mutator: nucleotide.BitFlipMutator{Probability: 0.01}}},
+		Elitism:           1,
+		Env:               EmptyEnv{},
+		AgeBiasedMutation: true,
 	}
 	engine, err := nucleotide.NewEngine[EmptyEnv, struct{}](config)
 	if err != nil {
