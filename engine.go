@@ -221,6 +221,21 @@ func (e *Engine[E, S]) selectMutator() Mutator {
 
 // Run executes the genetic algorithm. It uses the provided definition to initialize the population if not already set.
 func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
+	if e.Config.PopulationSize == 0 {
+		product := 1
+		if def != nil && len(def.Loci) > 0 {
+			for _, locus := range def.Loci {
+				geneCount := len(locus.PossibleGenes)
+				if geneCount > 0 {
+					product *= geneCount
+				}
+			}
+			e.Config.PopulationSize = 40 * product
+		} else {
+			e.Config.PopulationSize = 100 // Safe default fallback if no definition or loci defined
+		}
+	}
+
 	if len(e.Population) == 0 {
 		e.Population = e.Config.PopulationFunc(def, e.Config.PopulationSize)
 	}

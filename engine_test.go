@@ -254,3 +254,50 @@ func TestElitism_TopN(t *testing.T) {
 		t.Errorf("TopNElitism failed to select the second best individual (Fitness 20)")
 	}
 }
+
+func TestEngine_DefaultPopulationSizeDeduction(t *testing.T) {
+	// L1 has 2 genes, L2 has 3 genes.
+	// Formula: 40 * 2 * 3 = 240
+	def := NewDefinition[TestEnv, struct{}]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
+
+	l2 := def.AddLocus("L2", LocusBehavioral)
+	l2.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l2.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
+	l2.AddGene("G3", func(ctx Context[TestEnv, struct{}]) {})
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize: 0, // Request dynamic deduction
+		MaxGenerations: 1,
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
+		},
+		Selector: GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	if engine.Config.PopulationSize != 0 {
+		t.Errorf("Expected PopulationSize to remain 0 before running, got %d", engine.Config.PopulationSize)
+	}
+
+	_, err = engine.Run(def)
+	if err != nil {
+		t.Fatalf("Engine.Run failed: %v", err)
+	}
+
+	// Dynamic deduction should have computed 40 * 2 * 3 = 240
+	if engine.Config.PopulationSize != 240 {
+		t.Errorf("Expected dynamically deduced PopulationSize to be 240, got %d", engine.Config.PopulationSize)
+	}
+
+	if len(engine.Population) != 240 {
+		t.Errorf("Expected Population size to be initialized to 240, got %d", len(engine.Population))
+	}
+}
+
