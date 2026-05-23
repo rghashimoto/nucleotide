@@ -17,8 +17,8 @@ func TestEngine_Run_Categorical(t *testing.T) {
 			return []float64{1.0}
 		},
 		Selector:     GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
-		Crossoverers: []Crossoverer{SinglePointCrossover{}},
-		Mutators:     []Mutator{CategoricalMutator{Probability: 0.1}},
+		Crossoverers: []WeightedCrossoverer{{Crossoverer: SinglePointCrossover{}}},
+		Mutators:     []WeightedMutator{{Mutator: CategoricalMutator{Probability: 0.1}}},
 		Elitism:      1,
 	}
 	engine, err := NewEngine[TestEnv, struct{}](config)
@@ -129,16 +129,16 @@ func TestNewEngine_DefaultFallbacks(t *testing.T) {
 	if len(engine.Config.Crossoverers) != 1 {
 		t.Errorf("Expected 1 default crossoverer, got %d", len(engine.Config.Crossoverers))
 	} else {
-		if _, ok := engine.Config.Crossoverers[0].(DefaultCrossoverer); !ok {
-			t.Errorf("Expected default crossoverer to be DefaultCrossoverer, got %T", engine.Config.Crossoverers[0])
+		if _, ok := engine.Config.Crossoverers[0].Crossoverer.(DefaultCrossoverer); !ok {
+			t.Errorf("Expected default crossoverer to be DefaultCrossoverer, got %T", engine.Config.Crossoverers[0].Crossoverer)
 		}
 	}
 
 	if len(engine.Config.Mutators) != 1 {
 		t.Errorf("Expected 1 default mutator, got %d", len(engine.Config.Mutators))
 	} else {
-		if _, ok := engine.Config.Mutators[0].(DefaultMutator); !ok {
-			t.Errorf("Expected default mutator to be DefaultMutator, got %T", engine.Config.Mutators[0])
+		if _, ok := engine.Config.Mutators[0].Mutator.(DefaultMutator); !ok {
+			t.Errorf("Expected default mutator to be DefaultMutator, got %T", engine.Config.Mutators[0].Mutator)
 		}
 	}
 }
@@ -150,14 +150,14 @@ func TestEngine_RoundRobinOperators(t *testing.T) {
 		FitnessFunc: func(g Genome, env TestEnv) []float64 {
 			return []float64{1.0}
 		},
-		Crossoverers: []Crossoverer{
-			MockCrossoverer{id: 1},
-			MockCrossoverer{id: 2},
+		Crossoverers: []WeightedCrossoverer{
+			{Crossoverer: MockCrossoverer{id: 1}},
+			{Crossoverer: MockCrossoverer{id: 2}},
 		},
-		Mutators: []Mutator{
-			MockMutator{id: 1},
-			MockMutator{id: 2},
-			MockMutator{id: 3},
+		Mutators: []WeightedMutator{
+			{Mutator: MockMutator{id: 1}},
+			{Mutator: MockMutator{id: 2}},
+			{Mutator: MockMutator{id: 3}},
 		},
 	}
 	engine, err := NewEngine[TestEnv, struct{}](config)
@@ -193,16 +193,14 @@ func TestEngine_WeightedOperators(t *testing.T) {
 		FitnessFunc: func(g Genome, env TestEnv) []float64 {
 			return []float64{1.0}
 		},
-		Crossoverers: []Crossoverer{
-			MockCrossoverer{id: 1},
-			MockCrossoverer{id: 2},
+		Crossoverers: []WeightedCrossoverer{
+			{Crossoverer: MockCrossoverer{id: 1}, Weight: 0.0},
+			{Crossoverer: MockCrossoverer{id: 2}, Weight: 1.0},
 		},
-		CrossovererWeights: []float64{0.0, 1.0},
-		Mutators: []Mutator{
-			MockMutator{id: 1},
-			MockMutator{id: 2},
+		Mutators: []WeightedMutator{
+			{Mutator: MockMutator{id: 1}, Weight: 1.0},
+			{Mutator: MockMutator{id: 2}, Weight: 0.0},
 		},
-		MutatorWeights: []float64{1.0, 0.0},
 	}
 	engine, err := NewEngine[TestEnv, struct{}](config)
 	if err != nil {
@@ -227,26 +225,15 @@ func TestEngine_WeightedOperators(t *testing.T) {
 		}
 	}
 
-	// Test invalid weights validation inside NewEngine
-	invalidConfig1 := config
-	invalidConfig1.CrossovererWeights = []float64{1.0} // size mismatch
-	_, err = NewEngine[TestEnv, struct{}](invalidConfig1)
-	if err == nil {
-		t.Error("Expected error for CrossovererWeights size mismatch, got nil")
+	// Test invalid negative weights validation inside NewEngine
+	invalidConfig := config
+	invalidConfig.Crossoverers = []WeightedCrossoverer{
+		{Crossoverer: MockCrossoverer{id: 1}, Weight: -1.0},
+		{Crossoverer: MockCrossoverer{id: 2}, Weight: 2.0},
 	}
-
-	invalidConfig2 := config
-	invalidConfig2.CrossovererWeights = []float64{-1.0, 2.0} // negative value
-	_, err = NewEngine[TestEnv, struct{}](invalidConfig2)
+	_, err = NewEngine[TestEnv, struct{}](invalidConfig)
 	if err == nil {
-		t.Error("Expected error for negative CrossovererWeights, got nil")
-	}
-
-	invalidConfig3 := config
-	invalidConfig3.CrossovererWeights = []float64{0.0, 0.0} // zero sum
-	_, err = NewEngine[TestEnv, struct{}](invalidConfig3)
-	if err == nil {
-		t.Error("Expected error for zero-sum CrossovererWeights, got nil")
+		t.Error("Expected error for negative Crossoverer weight, got nil")
 	}
 }
 

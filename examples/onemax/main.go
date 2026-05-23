@@ -39,8 +39,8 @@ func main() {
 		MaxGenerations: maxGens,
 		FitnessFunc:    fitnessFunc,
 		Selector:       nucleotide.GenericTournamentSelector[EmptyEnv, struct{}]{Size: 3},
-		Crossoverers:   []nucleotide.Crossoverer{nucleotide.SinglePointCrossover{}},
-		Mutators:       []nucleotide.Mutator{nucleotide.BitFlipMutator{Probability: 0.01}},
+		Crossoverers:   []nucleotide.WeightedCrossoverer{{Crossoverer: nucleotide.SinglePointCrossover{}}},
+		Mutators:       []nucleotide.WeightedMutator{{Mutator: nucleotide.BitFlipMutator{Probability: 0.01}}},
 		Elitism:        1,
 		Env:            EmptyEnv{},
 	}

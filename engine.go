@@ -9,6 +9,18 @@ import (
 // FitnessFunc defines how to evaluate an individual's fitness across one or more objectives, with access to the environment.
 type FitnessFunc[E any, S any] func(g Genome, env E) []float64
 
+// WeightedCrossoverer pairs a crossoverer operator with its selection probability weight.
+type WeightedCrossoverer struct {
+	Crossoverer Crossoverer
+	Weight      float64
+}
+
+// WeightedMutator pairs a mutator operator with its selection probability weight.
+type WeightedMutator struct {
+	Mutator Mutator
+	Weight  float64
+}
+
 // ObjectiveDirection represents the optimization direction for a single objective.
 type ObjectiveDirection int
 
@@ -64,10 +76,8 @@ type EngineConfig[E any, S any] struct {
 	MaxGenerations     int
 	FitnessFunc        FitnessFunc[E, S]
 	Selector           Selector
-	Crossoverers       []Crossoverer
-	Mutators           []Mutator
-	CrossovererWeights []float64
-	MutatorWeights     []float64
+	Crossoverers       []WeightedCrossoverer
+	Mutators           []WeightedMutator
 	Elitism            int
 	ElitismFunc        ElitismFunc[E, S]
 	PopulationFunc     PopulationFunc[E, S]
@@ -78,11 +88,13 @@ type EngineConfig[E any, S any] struct {
 
 // Engine orchestrates the genetic algorithm process.
 type Engine[E any, S any] struct {
-	Config       EngineConfig[E, S]
-	Population   Population[E, S]
-	Generation   int
-	crossoverIdx int
-	mutatorIdx   int
+	Config             EngineConfig[E, S]
+	Population         Population[E, S]
+	Generation         int
+	crossoverIdx       int
+	mutatorIdx         int
+	crossoverWeightSum float64
+	mutatorWeightSum   float64
 }
 
 // NewEngine creates a new evolution engine and performs validation.
@@ -98,46 +110,30 @@ func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
 
 	// Default Crossoverer fallback
 	if len(config.Crossoverers) == 0 {
-		config.Crossoverers = []Crossoverer{DefaultCrossoverer{}}
+		config.Crossoverers = []WeightedCrossoverer{{Crossoverer: DefaultCrossoverer{}}}
 	}
 
 	// Default Mutator fallback
 	if len(config.Mutators) == 0 {
-		config.Mutators = []Mutator{DefaultMutator{}}
+		config.Mutators = []WeightedMutator{{Mutator: DefaultMutator{}}}
 	}
 
-	// Validate CrossovererWeights
-	if len(config.CrossovererWeights) > 0 {
-		if len(config.CrossovererWeights) != len(config.Crossoverers) {
-			return nil, fmt.Errorf("CrossovererWeights size (%d) must match Crossoverers size (%d)", len(config.CrossovererWeights), len(config.Crossoverers))
+	// Validate Crossoverers and compute weight sum
+	crossoverWeightSum := 0.0
+	for _, wc := range config.Crossoverers {
+		if wc.Weight < 0 {
+			return nil, fmt.Errorf("crossoverer weight must not be negative")
 		}
-		sum := 0.0
-		for _, w := range config.CrossovererWeights {
-			if w < 0 {
-				return nil, fmt.Errorf("CrossovererWeights must not contain negative values")
-			}
-			sum += w
-		}
-		if sum == 0 {
-			return nil, fmt.Errorf("sum of CrossovererWeights must be greater than zero")
-		}
+		crossoverWeightSum += wc.Weight
 	}
 
-	// Validate MutatorWeights
-	if len(config.MutatorWeights) > 0 {
-		if len(config.MutatorWeights) != len(config.Mutators) {
-			return nil, fmt.Errorf("MutatorWeights size (%d) must match Mutators size (%d)", len(config.MutatorWeights), len(config.Mutators))
+	// Validate Mutators and compute weight sum
+	mutatorWeightSum := 0.0
+	for _, wm := range config.Mutators {
+		if wm.Weight < 0 {
+			return nil, fmt.Errorf("mutator weight must not be negative")
 		}
-		sum := 0.0
-		for _, w := range config.MutatorWeights {
-			if w < 0 {
-				return nil, fmt.Errorf("MutatorWeights must not contain negative values")
-			}
-			sum += w
-		}
-		if sum == 0 {
-			return nil, fmt.Errorf("sum of MutatorWeights must be greater than zero")
-		}
+		mutatorWeightSum += wm.Weight
 	}
 
 	if config.ElitismFunc == nil && config.Elitism > 0 {
@@ -157,7 +153,9 @@ func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
 	}
 
 	e := &Engine[E, S]{
-		Config: config,
+		Config:             config,
+		crossoverWeightSum: crossoverWeightSum,
+		mutatorWeightSum:   mutatorWeightSum,
 	}
 
 	if err := e.Config.Strategy.Initialize(e); err != nil {
@@ -173,29 +171,25 @@ func (e *Engine[E, S]) selectCrossoverer() Crossoverer {
 		return DefaultCrossoverer{}
 	}
 	if n == 1 {
-		return e.Config.Crossoverers[0]
+		return e.Config.Crossoverers[0].Crossoverer
 	}
 
-	if len(e.Config.CrossovererWeights) > 0 {
-		totalWeight := 0.0
-		for _, w := range e.Config.CrossovererWeights {
-			totalWeight += w
-		}
-		r := rand.Float64() * totalWeight
+	if e.crossoverWeightSum > 0 {
+		r := rand.Float64() * e.crossoverWeightSum
 		cumulative := 0.0
-		for i, w := range e.Config.CrossovererWeights {
-			cumulative += w
+		for _, wc := range e.Config.Crossoverers {
+			cumulative += wc.Weight
 			if r <= cumulative {
-				return e.Config.Crossoverers[i]
+				return wc.Crossoverer
 			}
 		}
-		return e.Config.Crossoverers[n-1]
+		return e.Config.Crossoverers[n-1].Crossoverer
 	}
 
 	// Round-robin selection
 	idx := e.crossoverIdx
 	e.crossoverIdx = (e.crossoverIdx + 1) % n
-	return e.Config.Crossoverers[idx]
+	return e.Config.Crossoverers[idx].Crossoverer
 }
 
 func (e *Engine[E, S]) selectMutator() Mutator {
@@ -204,29 +198,25 @@ func (e *Engine[E, S]) selectMutator() Mutator {
 		return DefaultMutator{}
 	}
 	if n == 1 {
-		return e.Config.Mutators[0]
+		return e.Config.Mutators[0].Mutator
 	}
 
-	if len(e.Config.MutatorWeights) > 0 {
-		totalWeight := 0.0
-		for _, w := range e.Config.MutatorWeights {
-			totalWeight += w
-		}
-		r := rand.Float64() * totalWeight
+	if e.mutatorWeightSum > 0 {
+		r := rand.Float64() * e.mutatorWeightSum
 		cumulative := 0.0
-		for i, w := range e.Config.MutatorWeights {
-			cumulative += w
+		for _, wm := range e.Config.Mutators {
+			cumulative += wm.Weight
 			if r <= cumulative {
-				return e.Config.Mutators[i]
+				return wm.Mutator
 			}
 		}
-		return e.Config.Mutators[n-1]
+		return e.Config.Mutators[n-1].Mutator
 	}
 
 	// Round-robin selection
 	idx := e.mutatorIdx
 	e.mutatorIdx = (e.mutatorIdx + 1) % n
-	return e.Config.Mutators[idx]
+	return e.Config.Mutators[idx].Mutator
 }
 
 // Run executes the genetic algorithm. It uses the provided definition to initialize the population if not already set.

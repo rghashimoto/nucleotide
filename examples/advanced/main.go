@@ -78,8 +78,8 @@ func main() {
 		MaxGenerations: 5,
 		FitnessFunc:    fitnessFunc,
 		Selector:       nucleotide.GenericTournamentSelector[*World, AgentState]{Size: 3},
-		Crossoverers:   []nucleotide.Crossoverer{nucleotide.SinglePointCrossover{}},
-		Mutators:       []nucleotide.Mutator{nucleotide.CategoricalMutator{Probability: 0.1}},
+		Crossoverers:   []nucleotide.WeightedCrossoverer{{Crossoverer: nucleotide.SinglePointCrossover{}}},
+		Mutators:       []nucleotide.WeightedMutator{{Mutator: nucleotide.CategoricalMutator{Probability: 0.1}}},
 		Elitism:        1,
 		Env:            &World{FoodAvailable: 10},
 	}

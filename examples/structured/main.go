@@ -44,8 +44,8 @@ func main() {
 		MaxGenerations: 20,
 		FitnessFunc:    fitnessFunc,
 		Selector:       nucleotide.GenericTournamentSelector[DummyEnv, struct{}]{Size: 3},
-		Crossoverers:   []nucleotide.Crossoverer{nucleotide.SinglePointCrossover{}},
-		Mutators:       []nucleotide.Mutator{nucleotide.CategoricalMutator{Probability: 0.1}},
+		Crossoverers:   []nucleotide.WeightedCrossoverer{{Crossoverer: nucleotide.SinglePointCrossover{}}},
+		Mutators:       []nucleotide.WeightedMutator{{Mutator: nucleotide.CategoricalMutator{Probability: 0.1}}},
 		Elitism:        1,
 		Env:            DummyEnv{},
 	}

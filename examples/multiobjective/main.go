@@ -57,8 +57,8 @@ func main() {
 		MaxGenerations: maxGens,
 		FitnessFunc:    fitnessFunc,
 		Selector:       nucleotide.GenericTournamentSelector[KnapsackEnv, struct{}]{Size: 4},
-		Crossoverers:   []nucleotide.Crossoverer{nucleotide.SinglePointCrossover{}},
-		Mutators:       []nucleotide.Mutator{nucleotide.BitFlipMutator{Probability: 0.05}},
+		Crossoverers:   []nucleotide.WeightedCrossoverer{{Crossoverer: nucleotide.SinglePointCrossover{}}},
+		Mutators:       []nucleotide.WeightedMutator{{Mutator: nucleotide.BitFlipMutator{Probability: 0.05}}},
 		Elitism:        2,
 		Env:            env,
 		// Define optimization directions for each objective:
