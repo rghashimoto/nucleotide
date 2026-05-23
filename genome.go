@@ -21,57 +21,57 @@ type Genome interface {
 }
 
 // Context provides access to the individual's state and the environment during expression.
-type Context[E any, S any] struct {
+type Context[Env any, State any] struct {
 	Ctx        context.Context
-	Individual *Individual[E, S]
-	Env        E
+	Individual *Individual[Env, State]
+	Env        Env
 }
 
 // SequencingContext provides information to the sequencer.
-type SequencingContext[E any, S any] struct {
-	BehavioralLoci      []*Locus[E, S]
+type SequencingContext[Env any, State any] struct {
+	BehavioralLoci      []*Locus[Env, State]
 	SelectedGeneIDs     []string
 	SelectedGeneIndices []int
 }
 
 // Gene represents an allele at a specific locus.
-type Gene[E any, S any] struct {
+type Gene[Env any, State any] struct {
 	ID       string
-	Callback func(ctx Context[E, S])
+	Callback func(ctx Context[Env, State])
 	Value    interface{}
 }
 
 // Locus represents a specific position in the genome. Note: "Loci" (pronounced lo-sigh) is the plural form of "Locus".
-type Locus[E any, S any] struct {
+type Locus[Env any, State any] struct {
 	ID            string
 	Type          LocusType
 	Immutable     bool
-	PossibleGenes []Gene[E, S]
+	PossibleGenes []Gene[Env, State]
 }
 
 // AddGene adds a possible gene to the locus.
-func (l *Locus[E, S]) AddGene(id string, callback func(ctx Context[E, S])) {
-	l.PossibleGenes = append(l.PossibleGenes, Gene[E, S]{ID: id, Callback: callback})
+func (l *Locus[Env, State]) AddGene(id string, callback func(ctx Context[Env, State])) {
+	l.PossibleGenes = append(l.PossibleGenes, Gene[Env, State]{ID: id, Callback: callback})
 }
 
 // AddParameterGene adds a gene that holds a value.
-func (l *Locus[E, S]) AddParameterGene(id string, value interface{}) {
-	l.PossibleGenes = append(l.PossibleGenes, Gene[E, S]{ID: id, Value: value})
+func (l *Locus[Env, State]) AddParameterGene(id string, value interface{}) {
+	l.PossibleGenes = append(l.PossibleGenes, Gene[Env, State]{ID: id, Value: value})
 }
 
 // AddConfigGene adds a gene for framework configuration.
-func (l *Locus[E, S]) AddConfigGene(id string, value interface{}) {
-	l.PossibleGenes = append(l.PossibleGenes, Gene[E, S]{ID: id, Value: value})
+func (l *Locus[Env, State]) AddConfigGene(id string, value interface{}) {
+	l.PossibleGenes = append(l.PossibleGenes, Gene[Env, State]{ID: id, Value: value})
 }
 
 // Definition defines the structure of the genome (the set of loci). Note: "Loci" is the plural form of "Locus".
-type Definition[E any, S any] struct {
-	Loci []*Locus[E, S]
+type Definition[Env any, State any] struct {
+	Loci []*Locus[Env, State]
 }
 
 // NewDefinition creates a new definition with default configuration loci.
-func NewDefinition[E any, S any]() *Definition[E, S] {
-	d := &Definition[E, S]{}
+func NewDefinition[Env any, State any]() *Definition[Env, State] {
+	d := &Definition[Env, State]{}
 	// Add default Execution Order locus
 	execLocus := d.AddLocus("Execution Order", LocusConfig)
 	execLocus.Immutable = true
@@ -80,8 +80,8 @@ func NewDefinition[E any, S any]() *Definition[E, S] {
 }
 
 // AddLocus adds a new locus to the definition.
-func (d *Definition[E, S]) AddLocus(id string, lType LocusType) *Locus[E, S] {
-	l := &Locus[E, S]{ID: id, Type: lType, Immutable: false}
+func (d *Definition[Env, State]) AddLocus(id string, lType LocusType) *Locus[Env, State] {
+	l := &Locus[Env, State]{ID: id, Type: lType, Immutable: false}
 	if lType == LocusConfig {
 		l.Immutable = true
 	}
@@ -90,11 +90,11 @@ func (d *Definition[E, S]) AddLocus(id string, lType LocusType) *Locus[E, S] {
 }
 
 // PopulationFunc is a function that creates an initial population.
-type PopulationFunc[E any, S any] func(def *Definition[E, S], size int) Population[E, S]
+type PopulationFunc[Env any, State any] func(def *Definition[Env, State], size int) Population[Env, State]
 
 // DefaultPopulationFunc creates a random population based on the definition.
-func DefaultPopulationFunc[E any, S any](def *Definition[E, S], size int) Population[E, S] {
-	pop := make(Population[E, S], size)
+func DefaultPopulationFunc[Env any, State any](def *Definition[Env, State], size int) Population[Env, State] {
+	pop := make(Population[Env, State], size)
 	for i := 0; i < size; i++ {
 		indices := make([]int, len(def.Loci))
 		for j, locus := range def.Loci {
@@ -102,7 +102,7 @@ func DefaultPopulationFunc[E any, S any](def *Definition[E, S], size int) Popula
 				indices[j] = rand.Intn(len(locus.PossibleGenes))
 			}
 		}
-		pop[i] = NewIndividual[E, S](&CategoricalGenome[E, S]{
+		pop[i] = NewIndividual[Env, State](&CategoricalGenome[Env, State]{
 			Definition:  def,
 			GeneIndices: indices,
 		})
@@ -111,37 +111,37 @@ func DefaultPopulationFunc[E any, S any](def *Definition[E, S], size int) Popula
 }
 
 // CategoricalGenome represents a genome where each locus has a specific gene chosen.
-type CategoricalGenome[E any, S any] struct {
-	Definition  *Definition[E, S]
+type CategoricalGenome[Env any, State any] struct {
+	Definition  *Definition[Env, State]
 	GeneIndices []int
 }
 
-func (g *CategoricalGenome[E, S]) Size() int {
+func (g *CategoricalGenome[Env, State]) Size() int {
 	return len(g.GeneIndices)
 }
 
-func (g *CategoricalGenome[E, S]) Copy() Genome {
+func (g *CategoricalGenome[Env, State]) Copy() Genome {
 	newIndices := make([]int, len(g.GeneIndices))
 	copy(newIndices, g.GeneIndices)
-	return &CategoricalGenome[E, S]{
+	return &CategoricalGenome[Env, State]{
 		Definition:  g.Definition,
 		GeneIndices: newIndices,
 	}
 }
 
-func (g *CategoricalGenome[E, S]) GetIndices() []int {
+func (g *CategoricalGenome[Env, State]) GetIndices() []int {
 	return g.GeneIndices
 }
 
-func (g *CategoricalGenome[E, S]) SetIndices(indices []int) {
+func (g *CategoricalGenome[Env, State]) SetIndices(indices []int) {
 	g.GeneIndices = indices
 }
 
-func (g *CategoricalGenome[E, S]) GetDefinition() interface{} {
+func (g *CategoricalGenome[Env, State]) GetDefinition() interface{} {
 	return g.Definition
 }
 
-func (g *CategoricalGenome[E, S]) GetLocus(i int) (int, bool, bool) {
+func (g *CategoricalGenome[Env, State]) GetLocus(i int) (int, bool, bool) {
 	if i < 0 || i >= len(g.Definition.Loci) {
 		return 0, false, false
 	}

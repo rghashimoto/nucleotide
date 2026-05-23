@@ -7,20 +7,20 @@ import (
 )
 
 // GenerationStrategy defines a modular execution interface for evolutionary generation loops.
-type GenerationStrategy[E any, S any] interface {
-	Initialize(e *Engine[E, S]) error
-	NextGeneration(e *Engine[E, S], def *Definition[E, S], current Population[E, S]) (Population[E, S], error)
+type GenerationStrategy[Env any, State any] interface {
+	Initialize(e *Engine[Env, State]) error
+	NextGeneration(e *Engine[Env, State], def *Definition[Env, State], current Population[Env, State]) (Population[Env, State], error)
 }
 
 // StandardGeneration implements single-objective reproduction, crossover, mutation, and elitism replacement.
-type StandardGeneration[E any, S any] struct{}
+type StandardGeneration[Env any, State any] struct{}
 
-func (s *StandardGeneration[E, S]) Initialize(e *Engine[E, S]) error {
+func (s *StandardGeneration[Env, State]) Initialize(e *Engine[Env, State]) error {
 	return nil
 }
 
-func (s *StandardGeneration[E, S]) NextGeneration(e *Engine[E, S], def *Definition[E, S], current Population[E, S]) (Population[E, S], error) {
-	newPop := make(Population[E, S], 0, e.Config.PopulationSize)
+func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], def *Definition[Env, State], current Population[Env, State]) (Population[Env, State], error) {
+	newPop := make(Population[Env, State], 0, e.Config.PopulationSize)
 
 	// Elitism
 	if e.Config.ElitismFunc != nil && e.Config.Elitism > 0 {
@@ -30,8 +30,8 @@ func (s *StandardGeneration[E, S]) NextGeneration(e *Engine[E, S], def *Definiti
 
 	// Fill the rest of the population
 	for len(newPop) < e.Config.PopulationSize {
-		p1 := e.Config.Selector.Select(current).(*Individual[E, S])
-		p2 := e.Config.Selector.Select(current).(*Individual[E, S])
+		p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+		p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
 
 		cross := e.selectCrossoverer()
 		mut1 := e.selectMutator()
@@ -42,9 +42,9 @@ func (s *StandardGeneration[E, S]) NextGeneration(e *Engine[E, S], def *Definiti
 		off1G = mut1.Mutate(off1G)
 		off2G = mut2.Mutate(off2G)
 
-		newPop = append(newPop, NewIndividual[E, S](off1G))
+		newPop = append(newPop, NewIndividual[Env, State](off1G))
 		if len(newPop) < e.Config.PopulationSize {
-			newPop = append(newPop, NewIndividual[E, S](off2G))
+			newPop = append(newPop, NewIndividual[Env, State](off2G))
 		}
 	}
 
@@ -56,22 +56,22 @@ func (s *StandardGeneration[E, S]) NextGeneration(e *Engine[E, S], def *Definiti
 }
 
 // NSGA2Generation implements the multi-objective Non-dominated Sorting Genetic Algorithm II strategy.
-type NSGA2Generation[E any, S any] struct{}
+type NSGA2Generation[Env any, State any] struct{}
 
-func (s *NSGA2Generation[E, S]) Initialize(e *Engine[E, S]) error {
+func (s *NSGA2Generation[Env, State]) Initialize(e *Engine[Env, State]) error {
 	return nil
 }
 
-func (s *NSGA2Generation[E, S]) NextGeneration(e *Engine[E, S], def *Definition[E, S], current Population[E, S]) (Population[E, S], error) {
+func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def *Definition[Env, State], current Population[Env, State]) (Population[Env, State], error) {
 	if len(current) == 0 {
 		return nil, fmt.Errorf("NSGA-II: parent population is empty")
 	}
 
 	// 1. Generate offspring population Q_t of size N using selection, crossover, and mutation
-	offspring := make(Population[E, S], 0, len(current))
+	offspring := make(Population[Env, State], 0, len(current))
 	for len(offspring) < len(current) {
-		p1 := e.Config.Selector.Select(current).(*Individual[E, S])
-		p2 := e.Config.Selector.Select(current).(*Individual[E, S])
+		p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+		p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
 
 		cross := e.selectCrossoverer()
 		mut1 := e.selectMutator()
@@ -82,19 +82,19 @@ func (s *NSGA2Generation[E, S]) NextGeneration(e *Engine[E, S], def *Definition[
 		off1G = mut1.Mutate(off1G)
 		off2G = mut2.Mutate(off2G)
 
-		off1 := NewIndividual[E, S](off1G)
+		off1 := NewIndividual[Env, State](off1G)
 		off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
 		offspring = append(offspring, off1)
 
 		if len(offspring) < len(current) {
-			off2 := NewIndividual[E, S](off2G)
+			off2 := NewIndividual[Env, State](off2G)
 			off2.Fitness = e.Config.FitnessFunc(off2.Genome, e.Config.Env)
 			offspring = append(offspring, off2)
 		}
 	}
 
 	// 2. Combine parent population P_t and offspring Q_t to form R_t of size 2N
-	combined := make(Population[E, S], 0, len(current)+len(offspring))
+	combined := make(Population[Env, State], 0, len(current)+len(offspring))
 	combined = append(combined, current...)
 	combined = append(combined, offspring...)
 
@@ -102,7 +102,7 @@ func (s *NSGA2Generation[E, S]) NextGeneration(e *Engine[E, S], def *Definition[
 	fronts := fastNondominatedSort(combined, e.Config.ObjectiveDirections)
 
 	// 4. Fill the next generation population sequentially using the Pareto fronts
-	newPop := make(Population[E, S], 0, len(current))
+	newPop := make(Population[Env, State], 0, len(current))
 	for _, frontIndices := range fronts {
 		if len(frontIndices) == 0 {
 			continue
@@ -135,7 +135,7 @@ func (s *NSGA2Generation[E, S]) NextGeneration(e *Engine[E, S], def *Definition[
 // dominates returns true if ind1 dominates ind2.
 // An individual ind1 dominates ind2 if it is no worse in all objectives
 // and strictly better in at least one objective.
-func dominates[E any, S any](ind1, ind2 *Individual[E, S], directions []ObjectiveDirection) bool {
+func dominates[Env any, State any](ind1, ind2 *Individual[Env, State], directions []ObjectiveDirection) bool {
 	numObj := len(ind1.Fitness)
 	if len(ind2.Fitness) < numObj {
 		numObj = len(ind2.Fitness)
@@ -171,7 +171,7 @@ func dominates[E any, S any](ind1, ind2 *Individual[E, S], directions []Objectiv
 }
 
 // fastNondominatedSort groups individuals into dominance-based frontiers.
-func fastNondominatedSort[E any, S any](pop Population[E, S], directions []ObjectiveDirection) [][]int {
+func fastNondominatedSort[Env any, State any](pop Population[Env, State], directions []ObjectiveDirection) [][]int {
 	n := len(pop)
 	if n == 0 {
 		return nil
@@ -229,7 +229,7 @@ func fastNondominatedSort[E any, S any](pop Population[E, S], directions []Objec
 }
 
 // calculateCrowdingDistances computes the sparsity metric for individuals in a front.
-func calculateCrowdingDistances[E any, S any](pop Population[E, S], frontIndices []int, directions []ObjectiveDirection) {
+func calculateCrowdingDistances[Env any, State any](pop Population[Env, State], frontIndices []int, directions []ObjectiveDirection) {
 	n := len(frontIndices)
 	if n == 0 {
 		return

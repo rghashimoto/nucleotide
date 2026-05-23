@@ -39,8 +39,8 @@ func (s TournamentSelector) Select(pop interface{}) interface{} {
 	return nil // Placeholder, will fix below with a generic-friendly approach
 }
 
-// GenericTournamentSelector is a type-safe selector for a specific environment E and state S.
-type GenericTournamentSelector[E any, S any] struct {
+// GenericTournamentSelector is a type-safe selector for a specific environment Env and state State.
+type GenericTournamentSelector[Env any, State any] struct {
 	Size int
 
 	// Probabilistic Selection
@@ -66,7 +66,7 @@ type GenericTournamentSelector[E any, S any] struct {
 	AgeBias float64
 
 	// Hall of Fame Competitor Integration
-	HallOfFame            *Population[E, S]
+	HallOfFame            *Population[Env, State]
 	HallOfFameProbability float64
 
 	// Self-adaptive Selection
@@ -74,16 +74,16 @@ type GenericTournamentSelector[E any, S any] struct {
 }
 
 // NewProbabilisticTournamentSelector creates a tournament selector with selection probability controls.
-func NewProbabilisticTournamentSelector[E any, S any](size int, probability float64) GenericTournamentSelector[E, S] {
-	return GenericTournamentSelector[E, S]{
+func NewProbabilisticTournamentSelector[Env any, State any](size int, probability float64) GenericTournamentSelector[Env, State] {
+	return GenericTournamentSelector[Env, State]{
 		Size:        size,
 		Probability: probability,
 	}
 }
 
 // NewAdaptiveTournamentSelector creates a selector that dynamically scales tournament size.
-func NewAdaptiveTournamentSelector[E any, S any](minSize, maxSize int, progressFunc func() float64) GenericTournamentSelector[E, S] {
-	return GenericTournamentSelector[E, S]{
+func NewAdaptiveTournamentSelector[Env any, State any](minSize, maxSize int, progressFunc func() float64) GenericTournamentSelector[Env, State] {
+	return GenericTournamentSelector[Env, State]{
 		MinSize:            minSize,
 		MaxSize:            maxSize,
 		GenerationProgress: progressFunc,
@@ -91,8 +91,8 @@ func NewAdaptiveTournamentSelector[E any, S any](minSize, maxSize int, progressF
 }
 
 // NewNichingTournamentSelector creates a selector that applies local fitness sharing within tournaments.
-func NewNichingTournamentSelector[E any, S any](size int, sigma float64, distFunc func(g1, g2 Genome) float64) GenericTournamentSelector[E, S] {
-	return GenericTournamentSelector[E, S]{
+func NewNichingTournamentSelector[Env any, State any](size int, sigma float64, distFunc func(g1, g2 Genome) float64) GenericTournamentSelector[Env, State] {
+	return GenericTournamentSelector[Env, State]{
 		Size:         size,
 		SigmaShare:   sigma,
 		DistanceFunc: distFunc,
@@ -100,8 +100,8 @@ func NewNichingTournamentSelector[E any, S any](size int, sigma float64, distFun
 }
 
 // NewUniqueTournamentSelector creates a selector that draws tournament competitors without replacement.
-func NewUniqueTournamentSelector[E any, S any](size int) GenericTournamentSelector[E, S] {
-	return GenericTournamentSelector[E, S]{
+func NewUniqueTournamentSelector[Env any, State any](size int) GenericTournamentSelector[Env, State] {
+	return GenericTournamentSelector[Env, State]{
 		Size:   size,
 		Unique: true,
 	}
@@ -161,11 +161,11 @@ func defaultGenomeDistance(g1, g2 Genome) float64 {
 	return 0.0
 }
 
-func (s GenericTournamentSelector[E, S]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[E, S]))
+func (s GenericTournamentSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+func (s GenericTournamentSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
 	n := len(pop)
 	if n == 0 {
 		return nil
@@ -235,7 +235,7 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 	}
 
 	// 1.5 Self-adaptive Selection Size Override
-	var tournament Population[E, S]
+	var tournament Population[Env, State]
 	if s.SelfAdaptive && n > 1 {
 		candidate := pop[rand.Intn(n)]
 		k := s.Size
@@ -251,7 +251,7 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 			if preferredK, ok := sas.GetSelectionPreferences(); ok {
 				k = preferredK
 			}
-		} else if cg, ok := candidate.Genome.(*CategoricalGenome[E, S]); ok {
+		} else if cg, ok := candidate.Genome.(*CategoricalGenome[Env, State]); ok {
 			for i, locus := range cg.Definition.Loci {
 				if locus.ID == "TournamentSize" && locus.Type == LocusParameter {
 					geneIdx := cg.GeneIndices[i]
@@ -269,7 +269,7 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 			k = n
 		}
 
-		tournament = make(Population[E, S], k)
+		tournament = make(Population[Env, State], k)
 		tournament[0] = candidate
 		for i := 1; i < k; i++ {
 			tournament[i] = pop[rand.Intn(n)]
@@ -277,7 +277,7 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 		size = k
 	} else {
 		// 2. Sample competitors (Unique Tournament & Hall of Fame Support)
-		tournament = make(Population[E, S], size)
+		tournament = make(Population[Env, State], size)
 		if s.Unique {
 			selectedIndices := make(map[int]bool)
 			for i := 0; i < size; i++ {
@@ -319,7 +319,7 @@ func (s GenericTournamentSelector[E, S]) SelectTyped(pop Population[E, S]) *Indi
 	}
 
 	type ratedCompetitor struct {
-		ind         *Individual[E, S]
+		ind         *Individual[Env, State]
 		originalFit float64
 		adjustedFit float64
 	}
@@ -758,15 +758,15 @@ func (m DefaultMutator) Mutate(g Genome) Genome {
 }
 
 // RouletteWheelSelector selects individuals proportional to their fitness.
-type RouletteWheelSelector[E any, S any] struct {
+type RouletteWheelSelector[Env any, State any] struct {
 	AutoShift bool // If true, shifts negative fitnesses so minimum is 0.
 }
 
-func (s RouletteWheelSelector[E, S]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[E, S]))
+func (s RouletteWheelSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s RouletteWheelSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+func (s RouletteWheelSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
 	n := len(pop)
 	if n == 0 {
 		return nil
@@ -832,23 +832,23 @@ func (s RouletteWheelSelector[E, S]) SelectTyped(pop Population[E, S]) *Individu
 }
 
 // StochasticUniversalSamplingSelector uses a single spin to select multiple parents with minimal bias.
-type StochasticUniversalSamplingSelector[E any, S any] struct {
+type StochasticUniversalSamplingSelector[Env any, State any] struct {
 	AutoShift bool
-	queue     *[]*Individual[E, S]
+	queue     *[]*Individual[Env, State]
 }
 
-func (s StochasticUniversalSamplingSelector[E, S]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[E, S]))
+func (s StochasticUniversalSamplingSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s StochasticUniversalSamplingSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+func (s StochasticUniversalSamplingSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
 	n := len(pop)
 	if n == 0 {
 		return nil
 	}
 
 	if s.queue == nil {
-		s.queue = &[]*Individual[E, S]{}
+		s.queue = &[]*Individual[Env, State]{}
 	}
 
 	if len(*s.queue) == 0 {
@@ -864,7 +864,7 @@ func (s StochasticUniversalSamplingSelector[E, S]) SelectTyped(pop Population[E,
 	return pop[rand.Intn(n)]
 }
 
-func (s StochasticUniversalSamplingSelector[E, S]) fillQueue(pop Population[E, S]) {
+func (s StochasticUniversalSamplingSelector[Env, State]) fillQueue(pop Population[Env, State]) {
 	n := len(pop)
 	if n == 0 {
 		return
@@ -908,7 +908,7 @@ func (s StochasticUniversalSamplingSelector[E, S]) fillQueue(pop Population[E, S
 	}
 
 	if sum <= 0 {
-		q := make([]*Individual[E, S], n)
+		q := make([]*Individual[Env, State], n)
 		for i := 0; i < n; i++ {
 			q[i] = pop[rand.Intn(n)]
 		}
@@ -919,7 +919,7 @@ func (s StochasticUniversalSamplingSelector[E, S]) fillQueue(pop Population[E, S
 	ptrDistance := sum / float64(n)
 	start := rand.Float64() * ptrDistance
 
-	q := make([]*Individual[E, S], 0, n)
+	q := make([]*Individual[Env, State], 0, n)
 	currSum := 0.0
 	idx := 0
 
@@ -947,15 +947,15 @@ func (s StochasticUniversalSamplingSelector[E, S]) fillQueue(pop Population[E, S
 }
 
 // RankSelector selects individuals based on their fitness rank rather than absolute fitness.
-type RankSelector[E any, S any] struct {
+type RankSelector[Env any, State any] struct {
 	SelectionPressure float64 // typically in [1.0, 2.0], defaults to 1.5 if <= 0
 }
 
-func (s RankSelector[E, S]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[E, S]))
+func (s RankSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s RankSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+func (s RankSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
 	n := len(pop)
 	if n == 0 {
 		return nil
@@ -975,7 +975,7 @@ func (s RankSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] 
 		sp = 2.0
 	}
 
-	sortedPop := make(Population[E, S], n)
+	sortedPop := make(Population[Env, State], n)
 	copy(sortedPop, pop)
 	sort.Slice(sortedPop, func(i, j int) bool {
 		var f1, f2 float64
@@ -1009,15 +1009,15 @@ func (s RankSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] 
 }
 
 // BoltzmannSelector selects individuals using a Boltzmann distribution with temperature.
-type BoltzmannSelector[E any, S any] struct {
+type BoltzmannSelector[Env any, State any] struct {
 	Temperature float64 // Defaults to 1.0 if <= 0
 }
 
-func (s BoltzmannSelector[E, S]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[E, S]))
+func (s BoltzmannSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s BoltzmannSelector[E, S]) SelectTyped(pop Population[E, S]) *Individual[E, S] {
+func (s BoltzmannSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
 	n := len(pop)
 	if n == 0 {
 		return nil

@@ -7,7 +7,7 @@ import (
 )
 
 // FitnessFunc defines how to evaluate an individual's fitness across one or more objectives, with access to the environment.
-type FitnessFunc[E any, S any] func(g Genome, env E) []float64
+type FitnessFunc[Env any, State any] func(g Genome, env Env) []float64
 
 // WeightedCrossoverer pairs a crossoverer operator with its selection probability weight.
 type WeightedCrossoverer struct {
@@ -30,23 +30,23 @@ const (
 )
 
 // ElitismFunc defines the strategy for carrying over individuals to the next generation.
-type ElitismFunc[E any, S any] func(pop Population[E, S], size int) Population[E, S]
+type ElitismFunc[Env any, State any] func(pop Population[Env, State], size int) Population[Env, State]
 
 // BestIndividualElitism carries over the best individual.
-func BestIndividualElitism[E any, S any](pop Population[E, S], size int) Population[E, S] {
+func BestIndividualElitism[Env any, State any](pop Population[Env, State], size int) Population[Env, State] {
 	if size <= 0 || len(pop) == 0 {
 		return nil
 	}
 	best := pop.Best()
-	return Population[E, S]{NewIndividual[E, S](best.Genome.Copy())}
+	return Population[Env, State]{NewIndividual[Env, State](best.Genome.Copy())}
 }
 
 // TopNElitism sorts the population and carries over the top N individuals.
-func TopNElitism[E any, S any](pop Population[E, S], size int) Population[E, S] {
+func TopNElitism[Env any, State any](pop Population[Env, State], size int) Population[Env, State] {
 	if size <= 0 || len(pop) == 0 {
 		return nil
 	}
-	sortedPop := make(Population[E, S], len(pop))
+	sortedPop := make(Population[Env, State], len(pop))
 	copy(sortedPop, pop)
 	sort.Slice(sortedPop, func(i, j int) bool {
 		var f1, f2 float64
@@ -63,33 +63,33 @@ func TopNElitism[E any, S any](pop Population[E, S], size int) Population[E, S] 
 		size = len(sortedPop)
 	}
 
-	result := make(Population[E, S], size)
+	result := make(Population[Env, State], size)
 	for i := 0; i < size; i++ {
-		result[i] = NewIndividual[E, S](sortedPop[i].Genome.Copy())
+		result[i] = NewIndividual[Env, State](sortedPop[i].Genome.Copy())
 	}
 	return result
 }
 
 // EngineConfig holds the configuration for the evolution engine.
-type EngineConfig[E any, S any] struct {
+type EngineConfig[Env any, State any] struct {
 	PopulationSize     int
 	MaxGenerations     int
-	FitnessFunc        FitnessFunc[E, S]
+	FitnessFunc        FitnessFunc[Env, State]
 	Selector           Selector
 	Crossoverers       []WeightedCrossoverer
 	Mutators           []WeightedMutator
 	Elitism            int
-	ElitismFunc        ElitismFunc[E, S]
-	PopulationFunc     PopulationFunc[E, S]
-	Env                E
+	ElitismFunc        ElitismFunc[Env, State]
+	PopulationFunc     PopulationFunc[Env, State]
+	Env                Env
 	ObjectiveDirections []ObjectiveDirection
-	Strategy           GenerationStrategy[E, S]
+	Strategy           GenerationStrategy[Env, State]
 }
 
 // Engine orchestrates the genetic algorithm process.
-type Engine[E any, S any] struct {
-	Config             EngineConfig[E, S]
-	Population         Population[E, S]
+type Engine[Env any, State any] struct {
+	Config             EngineConfig[Env, State]
+	Population         Population[Env, State]
 	Generation         int
 	crossoverIdx       int
 	mutatorIdx         int
@@ -98,14 +98,14 @@ type Engine[E any, S any] struct {
 }
 
 // NewEngine creates a new evolution engine and performs validation.
-func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
+func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env, State], error) {
 	if config.FitnessFunc == nil {
 		return nil, fmt.Errorf("FitnessFunc must be defined in EngineConfig")
 	}
 
 	// Default Selector fallback
 	if config.Selector == nil {
-		config.Selector = GenericTournamentSelector[E, S]{Size: 3}
+		config.Selector = GenericTournamentSelector[Env, State]{Size: 3}
 	}
 
 	// Default Crossoverer fallback
@@ -137,22 +137,22 @@ func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
 	}
 
 	if config.ElitismFunc == nil && config.Elitism > 0 {
-		config.ElitismFunc = BestIndividualElitism[E, S]
+		config.ElitismFunc = BestIndividualElitism[Env, State]
 	}
 	if config.PopulationFunc == nil {
-		config.PopulationFunc = DefaultPopulationFunc[E, S]
+		config.PopulationFunc = DefaultPopulationFunc[Env, State]
 	}
 
 	// Auto-deduce strategy if nil
 	if config.Strategy == nil {
 		if len(config.ObjectiveDirections) > 1 {
-			config.Strategy = &NSGA2Generation[E, S]{}
+			config.Strategy = &NSGA2Generation[Env, State]{}
 		} else {
-			config.Strategy = &StandardGeneration[E, S]{}
+			config.Strategy = &StandardGeneration[Env, State]{}
 		}
 	}
 
-	e := &Engine[E, S]{
+	e := &Engine[Env, State]{
 		Config:             config,
 		crossoverWeightSum: crossoverWeightSum,
 		mutatorWeightSum:   mutatorWeightSum,
@@ -165,7 +165,7 @@ func NewEngine[E any, S any](config EngineConfig[E, S]) (*Engine[E, S], error) {
 	return e, nil
 }
 
-func (e *Engine[E, S]) selectCrossoverer() Crossoverer {
+func (e *Engine[Env, State]) selectCrossoverer() Crossoverer {
 	n := len(e.Config.Crossoverers)
 	if n == 0 {
 		return DefaultCrossoverer{}
@@ -192,7 +192,7 @@ func (e *Engine[E, S]) selectCrossoverer() Crossoverer {
 	return e.Config.Crossoverers[idx].Crossoverer
 }
 
-func (e *Engine[E, S]) selectMutator() Mutator {
+func (e *Engine[Env, State]) selectMutator() Mutator {
 	n := len(e.Config.Mutators)
 	if n == 0 {
 		return DefaultMutator{}
@@ -220,7 +220,7 @@ func (e *Engine[E, S]) selectMutator() Mutator {
 }
 
 // Run executes the genetic algorithm. It uses the provided definition to initialize the population if not already set.
-func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
+func (e *Engine[Env, State]) Run(def *Definition[Env, State]) (*Individual[Env, State], error) {
 	if e.Config.PopulationSize == 0 {
 		product := 1
 		if def != nil && len(def.Loci) > 0 {
@@ -270,7 +270,7 @@ func (e *Engine[E, S]) Run(def *Definition[E, S]) (*Individual[E, S], error) {
 }
 
 // ParetoFrontier returns all non-dominated individuals from the current population (Rank == 0).
-func (e *Engine[E, S]) ParetoFrontier() Population[E, S] {
+func (e *Engine[Env, State]) ParetoFrontier() Population[Env, State] {
 	if len(e.Population) == 0 {
 		return nil
 	}
@@ -281,14 +281,14 @@ func (e *Engine[E, S]) ParetoFrontier() Population[E, S] {
 		return nil
 	}
 
-	frontier := make(Population[E, S], 0, len(fronts[0]))
+	frontier := make(Population[Env, State], 0, len(fronts[0]))
 	for _, idx := range fronts[0] {
 		frontier = append(frontier, e.Population[idx])
 	}
 	return frontier
 }
 
-func (e *Engine[E, S]) evaluate() {
+func (e *Engine[Env, State]) evaluate() {
 	for _, ind := range e.Population {
 		ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
 	}
