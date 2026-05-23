@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 )
 
 // GenerationStrategy defines a modular execution interface for evolutionary generation loops.
@@ -34,41 +35,123 @@ func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], d
 		globalScaler = 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
 	}
 
-	// Fill the rest of the population
-	for len(newPop) < e.Config.PopulationSize {
-		p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
-		p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
+	targetSize := e.Config.PopulationSize - len(newPop)
+	if targetSize <= 0 {
+		if len(newPop) > e.Config.PopulationSize {
+			newPop = newPop[:e.Config.PopulationSize]
+		}
+		return newPop, nil
+	}
 
-		cross := e.selectCrossoverer()
-		mut1 := e.selectMutator()
-		mut2 := e.selectMutator()
+	limit := e.effectiveConcurrencyLimit()
+	if e.Config.DisableParallelReproduction || limit <= 1 || targetSize <= 2 {
+		// Sequential pathway fallback
+		for len(newPop) < e.Config.PopulationSize {
+			p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+			p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
 
-		off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+			cross := e.selectCrossoverer()
+			mut1 := e.selectMutator()
+			mut2 := e.selectMutator()
 
-		ageScaler := 1.0
-		if e.Config.AgeBiasedMutation {
-			maxAge := p1.Age
-			if p2.Age > maxAge {
-				maxAge = p2.Age
+			off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+
+			ageScaler := 1.0
+			if e.Config.AgeBiasedMutation {
+				maxAge := p1.Age
+				if p2.Age > maxAge {
+					maxAge = p2.Age
+				}
+				if maxAge >= e.Config.AgeMutationThreshold {
+					ageScaler = e.Config.AgeMutationScaler
+				}
 			}
-			if maxAge >= e.Config.AgeMutationThreshold {
-				ageScaler = e.Config.AgeMutationScaler
+
+			totalScaler := globalScaler * ageScaler
+			mut1Scaled := e.scaleMutator(mut1, totalScaler)
+			mut2Scaled := e.scaleMutator(mut2, totalScaler)
+
+			off1G = mut1Scaled.Mutate(off1G)
+			off2G = mut2Scaled.Mutate(off2G)
+
+			newPop = append(newPop, NewIndividual[Env, State](off1G))
+			if len(newPop) < e.Config.PopulationSize {
+				newPop = append(newPop, NewIndividual[Env, State](off2G))
 			}
 		}
+		return newPop, nil
+	}
 
-		totalScaler := globalScaler * ageScaler
-		mut1Scaled := e.scaleMutator(mut1, totalScaler)
-		mut2Scaled := e.scaleMutator(mut2, totalScaler)
+	// Concurrent chunked pathway
+	workerCount := limit
+	if workerCount > targetSize {
+		workerCount = targetSize
+	}
 
-		off1G = mut1Scaled.Mutate(off1G)
-		off2G = mut2Scaled.Mutate(off2G)
-
-		newPop = append(newPop, NewIndividual[Env, State](off1G))
-		if len(newPop) < e.Config.PopulationSize {
-			newPop = append(newPop, NewIndividual[Env, State](off2G))
+	chunks := make([]int, workerCount)
+	baseChunk := targetSize / workerCount
+	remainder := targetSize % workerCount
+	for i := 0; i < workerCount; i++ {
+		chunks[i] = baseChunk
+		if remainder > 0 {
+			chunks[i]++
+			remainder--
 		}
 	}
 
+	var wg sync.WaitGroup
+	offspringMutex := sync.Mutex{}
+	var allOffspring Population[Env, State]
+
+	for w := 0; w < workerCount; w++ {
+		wg.Add(1)
+		chunkSize := chunks[w]
+		go func() {
+			defer wg.Done()
+			localOffspring := make(Population[Env, State], 0, chunkSize)
+
+			for len(localOffspring) < chunkSize {
+				p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+				p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
+
+				cross := e.selectCrossoverer()
+				mut1 := e.selectMutator()
+				mut2 := e.selectMutator()
+
+				off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+
+				ageScaler := 1.0
+				if e.Config.AgeBiasedMutation {
+					maxAge := p1.Age
+					if p2.Age > maxAge {
+						maxAge = p2.Age
+					}
+					if maxAge >= e.Config.AgeMutationThreshold {
+						ageScaler = e.Config.AgeMutationScaler
+					}
+				}
+
+				totalScaler := globalScaler * ageScaler
+				mut1Scaled := e.scaleMutator(mut1, totalScaler)
+				mut2Scaled := e.scaleMutator(mut2, totalScaler)
+
+				off1G = mut1Scaled.Mutate(off1G)
+				off2G = mut2Scaled.Mutate(off2G)
+
+				localOffspring = append(localOffspring, NewIndividual[Env, State](off1G))
+				if len(localOffspring) < chunkSize {
+					localOffspring = append(localOffspring, NewIndividual[Env, State](off2G))
+				}
+			}
+
+			offspringMutex.Lock()
+			allOffspring = append(allOffspring, localOffspring...)
+			offspringMutex.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	newPop = append(newPop, allOffspring...)
 	if len(newPop) > e.Config.PopulationSize {
 		newPop = newPop[:e.Config.PopulationSize]
 	}
@@ -96,43 +179,122 @@ func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def 
 
 	// 1. Generate offspring population Q_t of size N using selection, crossover, and mutation
 	offspring := make(Population[Env, State], 0, len(current))
-	for len(offspring) < len(current) {
-		p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
-		p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
+	targetSize := len(current)
+	limit := e.effectiveConcurrencyLimit()
 
-		cross := e.selectCrossoverer()
-		mut1 := e.selectMutator()
-		mut2 := e.selectMutator()
+	if e.Config.DisableParallelReproduction || limit <= 1 || targetSize <= 2 {
+		// Sequential pathway fallback
+		for len(offspring) < len(current) {
+			p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+			p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
 
-		off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+			cross := e.selectCrossoverer()
+			mut1 := e.selectMutator()
+			mut2 := e.selectMutator()
 
-		ageScaler := 1.0
-		if e.Config.AgeBiasedMutation {
-			maxAge := p1.Age
-			if p2.Age > maxAge {
-				maxAge = p2.Age
+			off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+
+			ageScaler := 1.0
+			if e.Config.AgeBiasedMutation {
+				maxAge := p1.Age
+				if p2.Age > maxAge {
+					maxAge = p2.Age
+				}
+				if maxAge >= e.Config.AgeMutationThreshold {
+					ageScaler = e.Config.AgeMutationScaler
+				}
 			}
-			if maxAge >= e.Config.AgeMutationThreshold {
-				ageScaler = e.Config.AgeMutationScaler
+
+			totalScaler := globalScaler * ageScaler
+			mut1Scaled := e.scaleMutator(mut1, totalScaler)
+			mut2Scaled := e.scaleMutator(mut2, totalScaler)
+
+			off1G = mut1Scaled.Mutate(off1G)
+			off2G = mut2Scaled.Mutate(off2G)
+
+			off1 := NewIndividual[Env, State](off1G)
+			off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
+			offspring = append(offspring, off1)
+
+			if len(offspring) < len(current) {
+				off2 := NewIndividual[Env, State](off2G)
+				off2.Fitness = e.Config.FitnessFunc(off2.Genome, e.Config.Env)
+				offspring = append(offspring, off2)
+			}
+		}
+	} else {
+		// Concurrent chunked pathway
+		workerCount := limit
+		if workerCount > targetSize {
+			workerCount = targetSize
+		}
+
+		chunks := make([]int, workerCount)
+		baseChunk := targetSize / workerCount
+		remainder := targetSize % workerCount
+		for i := 0; i < workerCount; i++ {
+			chunks[i] = baseChunk
+			if remainder > 0 {
+				chunks[i]++
+				remainder--
 			}
 		}
 
-		totalScaler := globalScaler * ageScaler
-		mut1Scaled := e.scaleMutator(mut1, totalScaler)
-		mut2Scaled := e.scaleMutator(mut2, totalScaler)
+		var wg sync.WaitGroup
+		offspringMutex := sync.Mutex{}
 
-		off1G = mut1Scaled.Mutate(off1G)
-		off2G = mut2Scaled.Mutate(off2G)
+		for w := 0; w < workerCount; w++ {
+			wg.Add(1)
+			chunkSize := chunks[w]
+			go func() {
+				defer wg.Done()
+				localOffspring := make(Population[Env, State], 0, chunkSize)
 
-		off1 := NewIndividual[Env, State](off1G)
-		off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
-		offspring = append(offspring, off1)
+				for len(localOffspring) < chunkSize {
+					p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+					p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
 
-		if len(offspring) < len(current) {
-			off2 := NewIndividual[Env, State](off2G)
-			off2.Fitness = e.Config.FitnessFunc(off2.Genome, e.Config.Env)
-			offspring = append(offspring, off2)
+					cross := e.selectCrossoverer()
+					mut1 := e.selectMutator()
+					mut2 := e.selectMutator()
+
+					off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+
+					ageScaler := 1.0
+					if e.Config.AgeBiasedMutation {
+						maxAge := p1.Age
+						if p2.Age > maxAge {
+							maxAge = p2.Age
+						}
+						if maxAge >= e.Config.AgeMutationThreshold {
+							ageScaler = e.Config.AgeMutationScaler
+						}
+					}
+
+					totalScaler := globalScaler * ageScaler
+					mut1Scaled := e.scaleMutator(mut1, totalScaler)
+					mut2Scaled := e.scaleMutator(mut2, totalScaler)
+
+					off1G = mut1Scaled.Mutate(off1G)
+					off2G = mut2Scaled.Mutate(off2G)
+
+					off1 := NewIndividual[Env, State](off1G)
+					off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
+					localOffspring = append(localOffspring, off1)
+
+					if len(localOffspring) < chunkSize {
+						off2 := NewIndividual[Env, State](off2G)
+						off2.Fitness = e.Config.FitnessFunc(off2.Genome, e.Config.Env)
+						localOffspring = append(localOffspring, off2)
+					}
+				}
+
+				offspringMutex.Lock()
+				offspring = append(offspring, localOffspring...)
+				offspringMutex.Unlock()
+			}()
 		}
+		wg.Wait()
 	}
 
 	// 2. Combine parent population P_t and offspring Q_t to form R_t of size 2N

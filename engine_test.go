@@ -482,3 +482,103 @@ func TestEngine_AgeBiasedMutation(t *testing.T) {
 	}
 }
 
+func TestEngine_ParallelFitness(t *testing.T) {
+	def := NewDefinition[TestEnv, struct{}]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize:   20,
+		MaxGenerations:   2,
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{10.0}
+		},
+		ConcurrencyLimit: 4,
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	best, err := engine.Run(def)
+	if err != nil {
+		t.Fatalf("Engine.Run failed under parallel execution: %v", err)
+	}
+
+	if best == nil {
+		t.Fatal("Engine.Run returned nil best individual")
+	}
+
+	for _, ind := range engine.Population {
+		if len(ind.Fitness) == 0 || ind.Fitness[0] != 10.0 {
+			t.Errorf("Expected fitness 10.0, got %v", ind.Fitness)
+		}
+	}
+}
+
+func TestEngine_ParallelReproduction(t *testing.T) {
+	def := NewDefinition[TestEnv, struct{}]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize:   30,
+		MaxGenerations:   5,
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
+		},
+		ConcurrencyLimit: 4,
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	best, err := engine.Run(def)
+	if err != nil {
+		t.Fatalf("Engine.Run failed under parallel reproduction: %v", err)
+	}
+
+	if len(engine.Population) != 30 {
+		t.Errorf("Expected population size 30, got %d", len(engine.Population))
+	}
+	if best == nil {
+		t.Fatal("Engine.Run returned nil best individual")
+	}
+}
+
+func TestEngine_DisableParallelism(t *testing.T) {
+	def := NewDefinition[TestEnv, struct{}]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize:              10,
+		MaxGenerations:              1,
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{5.0}
+		},
+		ConcurrencyLimit:            4,
+		DisableParallelFitness:     true,
+		DisableParallelReproduction: true,
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	_, err = engine.Run(def)
+	if err != nil {
+		t.Fatalf("Engine.Run failed with parallel disabled flags: %v", err)
+	}
+
+	if !engine.Config.DisableParallelFitness || !engine.Config.DisableParallelReproduction {
+		t.Error("Disable parallel flags were not preserved in EngineConfig")
+	}
+}
+

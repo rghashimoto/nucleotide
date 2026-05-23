@@ -5,7 +5,9 @@ import (
 	"math"
 	"math/rand"
 	"reflect"
+	"runtime"
 	"sort"
+	"sync"
 )
 
 // FitnessFunc defines how to evaluate an individual's fitness across one or more objectives, with access to the environment.
@@ -96,6 +98,11 @@ type EngineConfig[Env any, State any] struct {
 	AgeBiasedMutation    bool
 	AgeMutationThreshold int
 	AgeMutationScaler    float64
+
+	// Concurrency settings
+	ConcurrencyLimit           int
+	DisableParallelFitness     bool
+	DisableParallelReproduction bool
 }
 
 // Engine orchestrates the genetic algorithm process.
@@ -108,6 +115,7 @@ type Engine[Env any, State any] struct {
 	crossoverWeightSum float64
 	mutatorWeightSum   float64
 	DiversityHistory   []float64
+	mu                 sync.Mutex
 }
 
 // NewEngine creates a new evolution engine and performs validation.
@@ -189,6 +197,9 @@ func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env
 }
 
 func (e *Engine[Env, State]) selectCrossoverer() Crossoverer {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	n := len(e.Config.Crossoverers)
 	if n == 0 {
 		return DefaultCrossoverer{}
@@ -216,6 +227,9 @@ func (e *Engine[Env, State]) selectCrossoverer() Crossoverer {
 }
 
 func (e *Engine[Env, State]) selectMutator() Mutator {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	n := len(e.Config.Mutators)
 	if n == 0 {
 		return DefaultMutator{}
@@ -319,10 +333,44 @@ func (e *Engine[Env, State]) ParetoFrontier() Population[Env, State] {
 	return frontier
 }
 
-func (e *Engine[Env, State]) evaluate() {
-	for _, ind := range e.Population {
-		ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
+func (e *Engine[Env, State]) effectiveConcurrencyLimit() int {
+	if e.Config.ConcurrencyLimit == 1 {
+		return 1
 	}
+	if e.Config.ConcurrencyLimit <= 0 {
+		return runtime.NumCPU()
+	}
+	return e.Config.ConcurrencyLimit
+}
+
+func (e *Engine[Env, State]) evaluate() {
+	limit := e.effectiveConcurrencyLimit()
+	if e.Config.DisableParallelFitness || limit <= 1 || len(e.Population) <= 1 {
+		for _, ind := range e.Population {
+			ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
+		}
+		return
+	}
+
+	numInds := len(e.Population)
+	jobs := make(chan int, numInds)
+	for i := 0; i < numInds; i++ {
+		jobs <- i
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	for w := 0; w < limit; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				ind := e.Population[idx]
+				ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func (e *Engine[Env, State]) genotypicDiversity() float64 {

@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"sync"
 )
 
 // TournamentSelector selects the best individual from a random subset.
@@ -455,17 +456,24 @@ func (s RouletteWheelSelector[Env, State]) SelectTyped(pop Population[Env, State
 type StochasticUniversalSamplingSelector[Env any, State any] struct {
 	AutoShift bool
 	queue     *[]*Individual[Env, State]
+	mu        *sync.Mutex
 }
 
-func (s StochasticUniversalSamplingSelector[Env, State]) Select(pop interface{}) interface{} {
+func (s *StochasticUniversalSamplingSelector[Env, State]) Select(pop interface{}) interface{} {
 	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s StochasticUniversalSamplingSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+func (s *StochasticUniversalSamplingSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
 	n := len(pop)
 	if n == 0 {
 		return nil
 	}
+
+	if s.mu == nil {
+		s.mu = &sync.Mutex{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if s.queue == nil {
 		s.queue = &[]*Individual[Env, State]{}
@@ -484,7 +492,7 @@ func (s StochasticUniversalSamplingSelector[Env, State]) SelectTyped(pop Populat
 	return pop[rand.Intn(n)]
 }
 
-func (s StochasticUniversalSamplingSelector[Env, State]) fillQueue(pop Population[Env, State]) {
+func (s *StochasticUniversalSamplingSelector[Env, State]) fillQueue(pop Population[Env, State]) {
 	n := len(pop)
 	if n == 0 {
 		return
