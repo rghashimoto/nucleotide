@@ -2,6 +2,7 @@ package nucleotide
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -298,6 +299,186 @@ func TestEngine_DefaultPopulationSizeDeduction(t *testing.T) {
 
 	if len(engine.Population) != 240 {
 		t.Errorf("Expected Population size to be initialized to 240, got %d", len(engine.Population))
+	}
+}
+
+type CustomMutatorForTest struct {
+	Probability float64
+	OtherField  string
+}
+
+func (m CustomMutatorForTest) Mutate(g Genome) Genome {
+	return g
+}
+
+func TestEngine_ScaleMutator(t *testing.T) {
+	config := EngineConfig[TestEnv, struct{}]{
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
+		},
+	}
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	// 1. Test built-in CategoricalMutator
+	catMut := CategoricalMutator{Probability: 0.1}
+	scaledCat := engine.scaleMutator(catMut, 2.5).(CategoricalMutator)
+	if scaledCat.Probability != 0.25 {
+		t.Errorf("Expected scaled CategoricalMutator probability 0.25, got %f", scaledCat.Probability)
+	}
+	if catMut.Probability != 0.1 {
+		t.Errorf("Original CategoricalMutator was mutated: %f", catMut.Probability)
+	}
+
+	// 2. Test pointer built-in CategoricalMutator
+	catPtr := &CategoricalMutator{Probability: 0.1}
+	scaledPtr := engine.scaleMutator(catPtr, 2.5).(*CategoricalMutator)
+	if scaledPtr.Probability != 0.25 {
+		t.Errorf("Expected scaled pointer CategoricalMutator probability 0.25, got %f", scaledPtr.Probability)
+	}
+	if catPtr.Probability != 0.1 {
+		t.Errorf("Original pointer CategoricalMutator was mutated: %f", catPtr.Probability)
+	}
+
+	// 3. Test custom mutator reflection value
+	customMut := CustomMutatorForTest{Probability: 0.2, OtherField: "test"}
+	scaledCustom := engine.scaleMutator(customMut, 3.0).(CustomMutatorForTest)
+	if math.Abs(scaledCustom.Probability-0.6) > 1e-9 {
+		t.Errorf("Expected scaled CustomMutator probability 0.6, got %f", scaledCustom.Probability)
+	}
+	if scaledCustom.OtherField != "test" {
+		t.Errorf("Expected CustomMutator OtherField to remain 'test', got '%s'", scaledCustom.OtherField)
+	}
+
+	// 4. Test custom mutator reflection pointer
+	customPtr := &CustomMutatorForTest{Probability: 0.2, OtherField: "test"}
+	scaledCustomPtr := engine.scaleMutator(customPtr, 3.0).(*CustomMutatorForTest)
+	if math.Abs(scaledCustomPtr.Probability-0.6) > 1e-9 {
+		t.Errorf("Expected scaled pointer CustomMutator probability 0.6, got %f", scaledCustomPtr.Probability)
+	}
+}
+
+func TestEngine_GenotypicDiversity(t *testing.T) {
+	config := EngineConfig[TestEnv, struct{}]{
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
+		},
+	}
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	// 1. BitGenome Diversity
+	engine.Population = Population[TestEnv, struct{}]{
+		NewIndividual[TestEnv, struct{}](BitGenome{true, false, true}),
+		NewIndividual[TestEnv, struct{}](BitGenome{true, true, false}),
+	}
+	// Locus 0: true (2), dominance = 1.0, diversity = 0.0
+	// Locus 1: false (1), true (1), dominance = 0.5, diversity = 0.5
+	// Locus 2: true (1), false (1), dominance = 0.5, diversity = 0.5
+	// Avg: (0.0 + 0.5 + 0.5) / 3 = 0.3333333333333333
+	divBit := engine.genotypicDiversity()
+	if math.Abs(divBit-0.333333333) > 1e-6 {
+		t.Errorf("Expected BitGenome diversity ~0.333, got %f", divBit)
+	}
+
+	// 2. FloatGenome Diversity
+	engine.Population = Population[TestEnv, struct{}]{
+		NewIndividual[TestEnv, struct{}](FloatGenome{1.0, 2.0}),
+		NewIndividual[TestEnv, struct{}](FloatGenome{1.0, 4.0}),
+	}
+	// Locus 0: min = 1, max = 1, max == min -> 0.0
+	// Locus 1: min = 2, max = 4, mean = 3, stdDev = 1.0. locusDiv = 2 * 1 / 2 = 1.0
+	// Avg: (0.0 + 1.0) / 2 = 0.5
+	divFloat := engine.genotypicDiversity()
+	if math.Abs(divFloat-0.5) > 1e-6 {
+		t.Errorf("Expected FloatGenome diversity 0.5, got %f", divFloat)
+	}
+}
+
+func TestEngine_AdaptiveMutation(t *testing.T) {
+	def := NewDefinition[TestEnv, struct{}]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
+
+	callbackTriggered := false
+	var lastDiversity float64
+	var lastScaler float64
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize:    10,
+		MaxGenerations:    3,
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
+		},
+		AdaptiveMutation:  true,
+		MaxMutationScaler: 4.0,
+		OnMutationAdapted: func(generation int, diversity float64, currentScaler float64) {
+			callbackTriggered = true
+			lastDiversity = diversity
+			lastScaler = currentScaler
+		},
+		Mutators: []WeightedMutator{{Mutator: CategoricalMutator{Probability: 0.1}}},
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	_, err = engine.Run(def)
+	if err != nil {
+		t.Fatalf("Engine.Run failed: %v", err)
+	}
+
+	if len(engine.DiversityHistory) != 3 {
+		t.Errorf("Expected 3 entries in DiversityHistory, got %d", len(engine.DiversityHistory))
+	}
+
+	if !callbackTriggered {
+		t.Error("Expected OnMutationAdapted callback to be triggered, but it wasn't")
+	}
+
+	expectedScaler := 1.0 + (1.0-lastDiversity)*(4.0-1.0)
+	if math.Abs(lastScaler-expectedScaler) > 1e-9 {
+		t.Errorf("Expected lastScaler to be %f, got %f", expectedScaler, lastScaler)
+	}
+}
+
+func TestEngine_AgeBiasedMutation(t *testing.T) {
+	def := NewDefinition[TestEnv, struct{}]()
+	l1 := def.AddLocus("L1", LocusBehavioral)
+	l1.AddGene("G1", func(ctx Context[TestEnv, struct{}]) {})
+	l1.AddGene("G2", func(ctx Context[TestEnv, struct{}]) {})
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize:       10,
+		MaxGenerations:       2,
+		FitnessFunc: func(g Genome, env TestEnv) []float64 {
+			return []float64{1.0}
+		},
+		AgeBiasedMutation:    true,
+		AgeMutationThreshold: 1,
+		AgeMutationScaler:    5.0,
+		Mutators:             []WeightedMutator{{Mutator: CategoricalMutator{Probability: 0.1}}},
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	_, err = engine.Run(def)
+	if err != nil {
+		t.Fatalf("Engine.Run failed: %v", err)
+	}
+
+	if !engine.Config.AgeBiasedMutation {
+		t.Error("Expected AgeBiasedMutation to be enabled in config")
 	}
 }
 

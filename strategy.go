@@ -28,6 +28,12 @@ func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], d
 		newPop = append(newPop, elites...)
 	}
 
+	globalScaler := 1.0
+	if e.Config.AdaptiveMutation {
+		diversity := e.genotypicDiversity()
+		globalScaler = 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
+	}
+
 	// Fill the rest of the population
 	for len(newPop) < e.Config.PopulationSize {
 		p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
@@ -39,8 +45,23 @@ func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], d
 
 		off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
 
-		off1G = mut1.Mutate(off1G)
-		off2G = mut2.Mutate(off2G)
+		ageScaler := 1.0
+		if e.Config.AgeBiasedMutation {
+			maxAge := p1.Age
+			if p2.Age > maxAge {
+				maxAge = p2.Age
+			}
+			if maxAge >= e.Config.AgeMutationThreshold {
+				ageScaler = e.Config.AgeMutationScaler
+			}
+		}
+
+		totalScaler := globalScaler * ageScaler
+		mut1Scaled := e.scaleMutator(mut1, totalScaler)
+		mut2Scaled := e.scaleMutator(mut2, totalScaler)
+
+		off1G = mut1Scaled.Mutate(off1G)
+		off2G = mut2Scaled.Mutate(off2G)
 
 		newPop = append(newPop, NewIndividual[Env, State](off1G))
 		if len(newPop) < e.Config.PopulationSize {
@@ -67,6 +88,12 @@ func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def 
 		return nil, fmt.Errorf("NSGA-II: parent population is empty")
 	}
 
+	globalScaler := 1.0
+	if e.Config.AdaptiveMutation {
+		diversity := e.genotypicDiversity()
+		globalScaler = 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
+	}
+
 	// 1. Generate offspring population Q_t of size N using selection, crossover, and mutation
 	offspring := make(Population[Env, State], 0, len(current))
 	for len(offspring) < len(current) {
@@ -79,8 +106,23 @@ func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def 
 
 		off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
 
-		off1G = mut1.Mutate(off1G)
-		off2G = mut2.Mutate(off2G)
+		ageScaler := 1.0
+		if e.Config.AgeBiasedMutation {
+			maxAge := p1.Age
+			if p2.Age > maxAge {
+				maxAge = p2.Age
+			}
+			if maxAge >= e.Config.AgeMutationThreshold {
+				ageScaler = e.Config.AgeMutationScaler
+			}
+		}
+
+		totalScaler := globalScaler * ageScaler
+		mut1Scaled := e.scaleMutator(mut1, totalScaler)
+		mut2Scaled := e.scaleMutator(mut2, totalScaler)
+
+		off1G = mut1Scaled.Mutate(off1G)
+		off2G = mut2Scaled.Mutate(off2G)
 
 		off1 := NewIndividual[Env, State](off1G)
 		off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
