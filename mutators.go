@@ -10,9 +10,18 @@ type CategoricalMutator struct {
 }
 
 func (m CategoricalMutator) Mutate(g Genome) Genome {
-	// Again, we need to handle the generic CategoricalGenome[E, S].
-	// Let's use the same indexedGenome interface.
-	
+	if comp, ok := g.(CompositeGenome); ok {
+		newComp := make(CompositeGenome)
+		for k, sub := range comp {
+			if _, isSeq := sub.(SequenceGenome); isSeq {
+				newComp[k] = SwapMutator{Probability: m.Probability}.Mutate(sub)
+			} else {
+				newComp[k] = m.Mutate(sub)
+			}
+		}
+		return newComp
+	}
+
 	type mutableIndexedGenome interface {
 		Genome
 		GetIndices() []int
@@ -83,6 +92,18 @@ type CategoricalCreepMutator struct {
 }
 
 func (m CategoricalCreepMutator) Mutate(g Genome) Genome {
+	if comp, ok := g.(CompositeGenome); ok {
+		newComp := make(CompositeGenome)
+		for k, sub := range comp {
+			if _, isSeq := sub.(SequenceGenome); isSeq {
+				newComp[k] = SwapMutator{Probability: m.Probability}.Mutate(sub)
+			} else {
+				newComp[k] = m.Mutate(sub)
+			}
+		}
+		return newComp
+	}
+
 	type mutableIndexedGenome interface {
 		Genome
 		GetIndices() []int
@@ -124,6 +145,30 @@ func (m CategoricalCreepMutator) Mutate(g Genome) Genome {
 	return g
 }
 
+// SwapMutator swaps two random elements in a SequenceGenome with a given probability.
+type SwapMutator struct {
+	Probability float64
+}
+
+func (m SwapMutator) Mutate(g Genome) Genome {
+	if sg, ok := g.(SequenceGenome); ok {
+		if len(sg) <= 1 {
+			return g.Copy()
+		}
+		newG := sg.Copy().(SequenceGenome)
+		if rand.Float64() < m.Probability {
+			idx1 := rand.Intn(len(newG))
+			idx2 := rand.Intn(len(newG))
+			for idx1 == idx2 {
+				idx2 = rand.Intn(len(newG))
+			}
+			newG[idx1], newG[idx2] = newG[idx2], newG[idx1]
+		}
+		return newG
+	}
+	return g
+}
+
 // DefaultMutator performs dynamic fallback mutation based on genome type.
 type DefaultMutator struct {
 	Probability float64
@@ -139,6 +184,14 @@ func (m DefaultMutator) Mutate(g Genome) Genome {
 		return BitFlipMutator{Probability: prob}.Mutate(genome)
 	case FloatGenome:
 		return GaussianMutator{Probability: prob, StdDev: 0.1}.Mutate(genome)
+	case SequenceGenome:
+		return SwapMutator{Probability: prob}.Mutate(genome)
+	case CompositeGenome:
+		newComp := make(CompositeGenome)
+		for k, sub := range genome {
+			newComp[k] = m.Mutate(sub)
+		}
+		return newComp
 	default:
 		return CategoricalMutator{Probability: prob}.Mutate(genome)
 	}

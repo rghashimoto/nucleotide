@@ -8,6 +8,25 @@ import (
 type SinglePointCrossover struct{}
 
 func (c SinglePointCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
+	if comp1, ok := p1.(CompositeGenome); ok {
+		comp2 := p2.(CompositeGenome)
+		off1 := make(CompositeGenome)
+		off2 := make(CompositeGenome)
+		for k, sub1 := range comp1 {
+			sub2 := comp2[k]
+			if _, isSeq := sub1.(SequenceGenome); isSeq {
+				o1, o2 := PMXCrossover{}.Crossover(sub1, sub2)
+				off1[k] = o1
+				off2[k] = o2
+			} else {
+				o1, o2 := c.Crossover(sub1, sub2)
+				off1[k] = o1
+				off2[k] = o2
+			}
+		}
+		return off1, off2
+	}
+
 	size := p1.Size()
 	if size <= 1 {
 		return p1.Copy(), p2.Copy()
@@ -69,6 +88,25 @@ func (c SinglePointCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
 type TwoPointCrossover struct{}
 
 func (c TwoPointCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
+	if comp1, ok := p1.(CompositeGenome); ok {
+		comp2 := p2.(CompositeGenome)
+		off1 := make(CompositeGenome)
+		off2 := make(CompositeGenome)
+		for k, sub1 := range comp1 {
+			sub2 := comp2[k]
+			if _, isSeq := sub1.(SequenceGenome); isSeq {
+				o1, o2 := PMXCrossover{}.Crossover(sub1, sub2)
+				off1[k] = o1
+				off2[k] = o2
+			} else {
+				o1, o2 := c.Crossover(sub1, sub2)
+				off1[k] = o1
+				off2[k] = o2
+			}
+		}
+		return off1, off2
+	}
+
 	size := p1.Size()
 	if size <= 2 {
 		// Fallback to single point if size is too small
@@ -128,6 +166,25 @@ type UniformCrossover struct {
 }
 
 func (c UniformCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
+	if comp1, ok := p1.(CompositeGenome); ok {
+		comp2 := p2.(CompositeGenome)
+		off1 := make(CompositeGenome)
+		off2 := make(CompositeGenome)
+		for k, sub1 := range comp1 {
+			sub2 := comp2[k]
+			if _, isSeq := sub1.(SequenceGenome); isSeq {
+				o1, o2 := PMXCrossover{}.Crossover(sub1, sub2)
+				off1[k] = o1
+				off2[k] = o2
+			} else {
+				o1, o2 := c.Crossover(sub1, sub2)
+				off1[k] = o1
+				off2[k] = o2
+			}
+		}
+		return off1, off2
+	}
+
 	size := p1.Size()
 	if size <= 0 {
 		return p1.Copy(), p2.Copy()
@@ -213,13 +270,89 @@ func (c ArithmeticCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
 	return p1.Copy(), p2.Copy()
 }
 
+// PMXCrossover performs Partially Mapped Crossover (PMX) on two SequenceGenomes, preserving duplicate-free permutations.
+type PMXCrossover struct{}
+
+func (c PMXCrossover) Crossover(p1, p2 Genome) (Genome, Genome) {
+	seq1, ok1 := p1.(SequenceGenome)
+	seq2, ok2 := p2.(SequenceGenome)
+	if !ok1 || !ok2 {
+		return p1.Copy(), p2.Copy()
+	}
+
+	size := len(seq1)
+	if size <= 1 {
+		return p1.Copy(), p2.Copy()
+	}
+
+	point1 := rand.Intn(size - 1)
+	point2 := rand.Intn(size-1-point1) + point1 + 1
+
+	off1 := make(SequenceGenome, size)
+	off2 := make(SequenceGenome, size)
+
+	// Swapped segment copy
+	copy(off1[point1:point2], seq2[point1:point2])
+	copy(off2[point1:point2], seq1[point1:point2])
+
+	// Crossover segment value mappings
+	map1 := make(map[int]int)
+	map2 := make(map[int]int)
+	for i := point1; i < point2; i++ {
+		map1[seq2[i]] = seq1[i]
+		map2[seq1[i]] = seq2[i]
+	}
+
+	resolve1 := func(val int) int {
+		for {
+			mapped, exists := map1[val]
+			if !exists {
+				return val
+			}
+			val = mapped
+		}
+	}
+	resolve2 := func(val int) int {
+		for {
+			mapped, exists := map2[val]
+			if !exists {
+				return val
+			}
+			val = mapped
+		}
+	}
+
+	for i := 0; i < size; i++ {
+		if i >= point1 && i < point2 {
+			continue
+		}
+		off1[i] = resolve1(seq1[i])
+		off2[i] = resolve2(seq2[i])
+	}
+
+	return off1, off2
+}
+
 // DefaultCrossoverer performs dynamic fallback crossover based on genome type.
 type DefaultCrossoverer struct{}
 
 func (c DefaultCrossoverer) Crossover(p1, p2 Genome) (Genome, Genome) {
-	switch p1.(type) {
+	switch g1 := p1.(type) {
 	case FloatGenome:
 		return ArithmeticCrossover{Alpha: 0.5}.Crossover(p1, p2)
+	case SequenceGenome:
+		return PMXCrossover{}.Crossover(p1, p2)
+	case CompositeGenome:
+		g2 := p2.(CompositeGenome)
+		off1 := make(CompositeGenome)
+		off2 := make(CompositeGenome)
+		for k, sub1 := range g1 {
+			sub2 := g2[k]
+			o1, o2 := c.Crossover(sub1, sub2)
+			off1[k] = o1
+			off2[k] = o2
+		}
+		return off1, off2
 	default:
 		return SinglePointCrossover{}.Crossover(p1, p2)
 	}

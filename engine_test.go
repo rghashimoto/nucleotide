@@ -582,3 +582,392 @@ func TestEngine_DisableParallelism(t *testing.T) {
 	}
 }
 
+func TestEngine_SequenceGenome(t *testing.T) {
+	// 1. Test randomPermutation directly
+	min, max := 1, 10
+	size := 20
+	pop := make(Population[TestEnv, struct{}], size)
+	for i := 0; i < size; i++ {
+		pop[i] = NewIndividual[TestEnv, struct{}](SequenceGenome(randomPermutation(min, max)))
+	}
+	if len(pop) != size {
+		t.Fatalf("Expected population size %d, got %d", size, len(pop))
+	}
+	for i, ind := range pop {
+		sg, ok := ind.Genome.(SequenceGenome)
+		if !ok {
+			t.Fatalf("Individual %d genome is not SequenceGenome", i)
+		}
+		if sg.Size() != max-min+1 {
+			t.Errorf("Individual %d genome size expected %d, got %d", i, max-min+1, sg.Size())
+		}
+		// Check for duplicates
+		seen := make(map[int]bool)
+		for _, val := range sg {
+			if val < min || val > max {
+				t.Errorf("Value %d out of bounds [%d, %d]", val, min, max)
+			}
+			if seen[val] {
+				t.Errorf("Duplicate value %d found in genome %v", val, sg)
+			}
+			seen[val] = true
+		}
+	}
+
+	// 2. Test SwapMutator correctness
+	mutator := SwapMutator{Probability: 1.0}
+	parent := SequenceGenome{1, 2, 3, 4, 5}
+	mutated := mutator.Mutate(parent).(SequenceGenome)
+	if len(mutated) != len(parent) {
+		t.Errorf("Mutated genome length changed: expected %d, got %d", len(parent), len(mutated))
+	}
+	// Check that mutated is a permutation of parent and not identical (since probability is 1.0 and size > 1)
+	sameCount := 0
+	parentSeen := make(map[int]bool)
+	mutatedSeen := make(map[int]bool)
+	for i := 0; i < len(parent); i++ {
+		parentSeen[parent[i]] = true
+		mutatedSeen[mutated[i]] = true
+		if parent[i] == mutated[i] {
+			sameCount++
+		}
+	}
+	if len(mutatedSeen) != len(parentSeen) {
+		t.Errorf("Mutated genome has duplicates or missing elements: %v", mutated)
+	}
+	for val := range parentSeen {
+		if !mutatedSeen[val] {
+			t.Errorf("Element %d from parent not found in mutated genome %v", val, mutated)
+		}
+	}
+	if sameCount == len(parent) {
+		t.Errorf("Mutated genome is identical to parent even though probability is 1.0")
+	}
+
+	// 3. Test PMXCrossover correctness
+	crossover := PMXCrossover{}
+	p1 := SequenceGenome{1, 2, 3, 4, 5, 6, 7, 8}
+	p2 := SequenceGenome{8, 7, 6, 5, 4, 3, 2, 1}
+	
+	off1, off2 := crossover.Crossover(p1, p2)
+	sg1, ok1 := off1.(SequenceGenome)
+	sg2, ok2 := off2.(SequenceGenome)
+	if !ok1 || !ok2 {
+		t.Fatal("Offspring are not SequenceGenome")
+	}
+	if len(sg1) != len(p1) || len(sg2) != len(p2) {
+		t.Errorf("Offspring lengths incorrect: got %d and %d", len(sg1), len(sg2))
+	}
+	
+	// Verify permutation property (no duplicates)
+	seen1 := make(map[int]bool)
+	seen2 := make(map[int]bool)
+	for i := 0; i < len(sg1); i++ {
+		if seen1[sg1[i]] {
+			t.Errorf("Duplicate element %d found in offspring 1: %v", sg1[i], sg1)
+		}
+		seen1[sg1[i]] = true
+		if seen2[sg2[i]] {
+			t.Errorf("Duplicate element %d found in offspring 2: %v", sg2[i], sg2)
+		}
+		seen2[sg2[i]] = true
+	}
+
+	// 4. Run full Engine with SequenceGenome to optimize a sequence towards target
+	target := []int{1, 2, 3, 4, 5}
+	fitnessFunc := func(g Genome, env TestEnv) []float64 {
+		sg := g.(SequenceGenome)
+		// Count correct positions (higher is better)
+		score := 0.0
+		for i := 0; i < len(sg); i++ {
+			if sg[i] == target[i] {
+				score += 1.0
+			}
+		}
+		return []float64{score}
+	}
+
+	config := EngineConfig[TestEnv, struct{}]{
+		PopulationSize: 20,
+		MaxGenerations: 50,
+		FitnessFunc:    fitnessFunc,
+		Selector:       GenericTournamentSelector[TestEnv, struct{}]{Size: 3},
+		PopulationFunc: func(def *Definition[TestEnv, struct{}], size int) Population[TestEnv, struct{}] {
+			pop := make(Population[TestEnv, struct{}], size)
+			for i := 0; i < size; i++ {
+				pop[i] = NewIndividual[TestEnv, struct{}](SequenceGenome(randomPermutation(1, 5)))
+			}
+			return pop
+		},
+		Elitism:      2,
+	}
+
+	engine, err := NewEngine[TestEnv, struct{}](config)
+	if err != nil {
+		t.Fatalf("Failed to create engine: %v", err)
+	}
+
+	best, err := engine.Run(nil) // nil definition because SequenceGenome doesn't use Categorical Loci
+	if err != nil {
+		t.Fatalf("Engine.Run failed: %v", err)
+	}
+
+	if best == nil {
+		t.Fatal("Engine.Run returned nil best individual")
+	}
+
+	bestSG := best.Genome.(SequenceGenome)
+	t.Logf("Best Sequence evolved: %v with fitness %v", bestSG, best.Fitness)
+	if len(bestSG) != 5 {
+		t.Errorf("Expected evolved sequence of length 5, got %d", len(bestSG))
+	}
+}
+
+func TestEngine_NativeSequenceLoci(t *testing.T) {
+	// Setup Categorical definition
+	def := NewDefinition[TestEnv, *CounterState]()
+	
+	// Register a native sequence locus via Definition schema
+	locus := def.AddLocus("order", LocusSequence)
+	locus.AddSequenceGene("range", 1, 3)
+
+	// behavioral gene
+	lBehavior := def.AddLocus("Action", LocusBehavioral)
+	lBehavior.AddGene("ExecuteSequence", func(ctx Context[TestEnv, *CounterState]) {
+		seq := ctx.Individual.GetSequence("order")
+		
+		// Execute parameters in order defined by the sequence chromosome
+		for _, idx := range seq {
+			var paramName string
+			switch idx {
+			case 1:
+				paramName = "Param1"
+			case 2:
+				paramName = "Param2"
+			case 3:
+				paramName = "Param3"
+			}
+			val := ctx.Individual.GetParameter(paramName)
+			if val != nil {
+				if v, ok := val.(int); ok {
+					ctx.Individual.State.Count += v
+				}
+			}
+		}
+	})
+
+	// three parameter genes
+	lParam1 := def.AddLocus("Param1", LocusParameter)
+	lParam1.AddParameterGene("P1", 10)
+	
+	lParam2 := def.AddLocus("Param2", LocusParameter)
+	lParam2.AddParameterGene("P2", 20)
+	
+	lParam3 := def.AddLocus("Param3", LocusParameter)
+	lParam3.AddParameterGene("P3", 30)
+
+	// 1. Test Population Generation using DefaultPopulationFunc
+	size := 10
+	pop := DefaultPopulationFunc[TestEnv, *CounterState](def, size)
+	if len(pop) != size {
+		t.Fatalf("Expected population size %d, got %d", size, len(pop))
+	}
+
+	for _, ind := range pop {
+		_, ok := ind.Genome.(CompositeGenome)
+		if !ok {
+			t.Fatal("Individual genome is not CompositeGenome")
+		}
+		
+		// Check Sequence
+		seq := ind.GetSequence("order")
+		if len(seq) != 3 {
+			t.Errorf("Expected sequence size 3, got %d", len(seq))
+		}
+	}
+
+	// 2. Test Mutator and Crossover
+	parent1 := pop[0].Genome.(CompositeGenome)
+	parent2 := pop[1].Genome.(CompositeGenome)
+
+	cross := DefaultCrossoverer{}
+	off1, off2 := cross.Crossover(parent1, parent2)
+	
+	_, ok1 := off1.(CompositeGenome)
+	_, ok2 := off2.(CompositeGenome)
+	if !ok1 || !ok2 {
+		t.Fatal("Crossover offspring are not CompositeGenome")
+	}
+
+	mut := DefaultMutator{Probability: 1.0}
+	mutated := mut.Mutate(parent1).(CompositeGenome)
+	if len(mutated) != 2 { // categorical and order
+		t.Fatal("Mutated genome chromosomes count changed")
+	}
+
+	// 3. Test Expression using state interaction
+	ind := pop[0]
+	state := &CounterState{Count: 0}
+	ind.State = state
+	ind.Express(context.Background(), TestEnv{})
+	
+	// Value should be: Sum of parameters (10 + 20 + 30) = 60
+	if state.Count != 60 {
+		t.Errorf("Expected state.Count to be 60, got %d", state.Count)
+	}
+}
+
+func TestEngine_MultipleNativeSequenceLoci(t *testing.T) {
+	// Setup definition
+	def := NewDefinition[TestEnv, struct{}]()
+	def.AddLocus("L1", LocusParameter).AddParameterGene("P1", "val1")
+
+	// Add multiple sequence loci
+	locus1 := def.AddLocus("Collect Order", LocusSequence)
+	locus1.AddSequenceGene("range", 1, 5)
+	lSeq2 := def.AddLocus("Distribute Order", LocusSequence)
+	lSeq2.AddSequenceGene("range", 6, 10)
+
+	// 1. Test Population Generation
+	size := 5
+	pop := DefaultPopulationFunc[TestEnv, struct{}](def, size)
+	if len(pop) != size {
+		t.Fatalf("Expected population size %d, got %d", size, len(pop))
+	}
+
+	for i, ind := range pop {
+		_, ok := ind.Genome.(CompositeGenome)
+		if !ok {
+			t.Fatalf("Individual %d genome is not CompositeGenome", i)
+		}
+		
+		// Get sequences using new GetSequence API
+		collectSeq := ind.GetSequence("Collect Order")
+		distSeq := ind.GetSequence("Distribute Order")
+		
+		if len(collectSeq) != 5 {
+			t.Errorf("Expected Collect Order sequence length 5, got %d", len(collectSeq))
+		}
+		if len(distSeq) != 5 {
+			t.Errorf("Expected Distribute Order sequence length 5, got %d", len(distSeq))
+		}
+		
+		// Verify permutation properties (no duplicates, correct ranges)
+		seenCollect := make(map[int]bool)
+		for _, val := range collectSeq {
+			if val < 1 || val > 5 {
+				t.Errorf("Collect value %d out of bounds", val)
+			}
+			if seenCollect[val] {
+				t.Errorf("Duplicate value %d in Collect Order", val)
+			}
+			seenCollect[val] = true
+		}
+		
+		seenDist := make(map[int]bool)
+		for _, val := range distSeq {
+			if val < 6 || val > 10 {
+				t.Errorf("Distribute value %d out of bounds", val)
+			}
+			if seenDist[val] {
+				t.Errorf("Duplicate value %d in Distribute Order", val)
+			}
+			seenDist[val] = true
+		}
+	}
+
+	// 2. Test Mutator and Crossover
+	parent1 := pop[0].Genome.(CompositeGenome)
+	parent2 := pop[1].Genome.(CompositeGenome)
+
+	cross := DefaultCrossoverer{}
+	off1, off2 := cross.Crossover(parent1, parent2)
+	
+	cg1, ok1 := off1.(CompositeGenome)
+	cg2, ok2 := off2.(CompositeGenome)
+	if !ok1 || !ok2 {
+		t.Fatal("Offspring are not CompositeGenome")
+	}
+
+	// Verify offspring sequence loci preserve permutation properties after crossover
+	for _, cg := range []CompositeGenome{cg1, cg2} {
+		collect := cg["Collect Order"].(SequenceGenome)
+		dist := cg["Distribute Order"].(SequenceGenome)
+		
+		if len(collect) != 5 || len(dist) != 5 {
+			t.Fatalf("Offspring sequence lengths incorrect")
+		}
+		
+		// Duplicate check
+		seenC := make(map[int]bool)
+		for _, val := range collect {
+			if seenC[val] {
+				t.Errorf("Duplicate found in crossed Collect Order sequence")
+			}
+			seenC[val] = true
+		}
+		
+		seenD := make(map[int]bool)
+		for _, val := range dist {
+			if seenD[val] {
+				t.Errorf("Duplicate found in crossed Distribute Order sequence")
+			}
+			seenD[val] = true
+		}
+	}
+
+	mut := DefaultMutator{Probability: 1.0}
+	mutated := mut.Mutate(parent1).(CompositeGenome)
+	
+	// Verify mutated sequence loci also preserve permutation property
+	mCollect := mutated["Collect Order"].(SequenceGenome)
+	mDist := mutated["Distribute Order"].(SequenceGenome)
+	if len(mCollect) != 5 || len(mDist) != 5 {
+		t.Fatalf("Mutated sequence lengths incorrect")
+	}
+	seenMC := make(map[int]bool)
+	for _, val := range mCollect {
+		if seenMC[val] {
+			t.Errorf("Duplicate found in mutated Collect Order sequence")
+		}
+		seenMC[val] = true
+	}
+}
+
+func TestEngine_SerializationWithSequenceLoci(t *testing.T) {
+	def := NewDefinition[TestEnv, struct{}]()
+	def.AddLocus("L1", LocusParameter).AddParameterGene("P1", "val1")
+	locus := def.AddLocus("order", LocusSequence)
+	locus.AddSequenceGene("range", 1, 5)
+
+	pop := DefaultPopulationFunc[TestEnv, struct{}](def, 1)
+	cg := pop[0].Genome.(CompositeGenome)
+
+	encoded, err := EncodeGenome(cg)
+	if err != nil {
+		t.Fatalf("Failed to encode: %v", err)
+	}
+
+	decoded, err := DecodeGenome[TestEnv, struct{}](def, encoded)
+	if err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	compDecoded, ok := decoded.(CompositeGenome)
+	if !ok {
+		t.Fatalf("Expected decoded genome to be CompositeGenome")
+	}
+
+	decodedOrder := compDecoded["order"].(SequenceGenome)
+	cgOrder := cg["order"].(SequenceGenome)
+	if len(decodedOrder) != 5 {
+		t.Fatalf("Decoded genome sequence length incorrect: %v", decodedOrder)
+	}
+
+	for i, val := range decodedOrder {
+		if val != cgOrder[i] {
+			t.Errorf("Mismatch at index %d: expected %d, got %d", i, cgOrder[i], val)
+		}
+	}
+}
+

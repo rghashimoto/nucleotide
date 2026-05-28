@@ -90,8 +90,9 @@ func TestSerialization_Robust(t *testing.T) {
 		t.Fatalf("Failed to load: %v", err)
 	}
 	
-	if loaded.GeneIndices[1] != 0 {
-		t.Errorf("LoadGenome failed to map IDs correctly: expected index 0 (G2), got %d", loaded.GeneIndices[1])
+	cgLoaded := loaded.(*CategoricalGenome[TestEnv, struct{}])
+	if cgLoaded.GeneIndices[1] != 0 {
+		t.Errorf("LoadGenome failed to map IDs correctly: expected index 0 (G2), got %d", cgLoaded.GeneIndices[1])
 	}
 }
 
@@ -115,7 +116,8 @@ func TestMemorySerialization(t *testing.T) {
 		t.Fatalf("Decode failed: %v", err)
 	}
 	
-	if loaded.GeneIndices[1] != g.GeneIndices[1] {
+	cgDecoded := loaded.(*CategoricalGenome[TestEnv, struct{}])
+	if cgDecoded.GeneIndices[1] != g.GeneIndices[1] {
 		t.Errorf("Mismatch after decode")
 	}
 }

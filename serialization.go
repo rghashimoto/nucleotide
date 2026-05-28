@@ -14,31 +14,44 @@ type LocusGenePair struct {
 
 // GenomeData is the serializable format of a CategoricalGenome using IDs.
 type GenomeData struct {
-	Genes []LocusGenePair `json:"genes"`
+	Genes     []LocusGenePair           `json:"genes"`
+	Sequences map[string]SequenceGenome `json:"sequences,omitempty"`
 }
 
-// EncodeGenome encodes a CategoricalGenome's gene IDs into a JSON byte slice.
-func EncodeGenome[Env any, State any](g *CategoricalGenome[Env, State]) ([]byte, error) {
-	data := GenomeData{
-		Genes: make([]LocusGenePair, len(g.GeneIndices)),
+// EncodeGenome encodes a Genome's gene IDs into a JSON byte slice.
+func EncodeGenome(g Genome) ([]byte, error) {
+	var pairs []LocusGenePair
+	var seqs map[string]SequenceGenome
+
+	if comp, ok := g.(CompositeGenome); ok {
+		if serializable, ok := comp["categorical"].(interface{ GetGenePairs() []LocusGenePair }); ok {
+			pairs = serializable.GetGenePairs()
+		}
+		seqs = make(map[string]SequenceGenome)
+		for k, sub := range comp {
+			if seq, ok := sub.(SequenceGenome); ok {
+				seqs[k] = seq
+			}
+		}
+	} else if serializable, ok := g.(interface{ GetGenePairs() []LocusGenePair }); ok {
+		pairs = serializable.GetGenePairs()
+	} else {
+		return nil, fmt.Errorf("unsupported genome type for encoding: %T", g)
 	}
 
-	for i, geneIdx := range g.GeneIndices {
-		locus := g.Definition.Loci[i]
-		if geneIdx < 0 || geneIdx >= len(locus.PossibleGenes) {
-			return nil, fmt.Errorf("invalid gene index %d for locus %s", geneIdx, locus.ID)
-		}
-		data.Genes[i] = LocusGenePair{
-			LocusID: locus.ID,
-			GeneID:  locus.PossibleGenes[geneIdx].ID,
-		}
+	data := GenomeData{
+		Genes: pairs,
+	}
+
+	if len(seqs) > 0 {
+		data.Sequences = seqs
 	}
 
 	return json.MarshalIndent(data, "", "  ")
 }
 
 // DecodeGenome decodes gene IDs from a JSON byte slice and maps them to indices in the provided Definition.
-func DecodeGenome[Env any, State any](def *Definition[Env, State], data []byte) (*CategoricalGenome[Env, State], error) {
+func DecodeGenome[Env any, State any](def *Definition[Env, State], data []byte) (Genome, error) {
 	var gData GenomeData
 	if err := json.Unmarshal(data, &gData); err != nil {
 		return nil, err
@@ -50,7 +63,18 @@ func DecodeGenome[Env any, State any](def *Definition[Env, State], data []byte) 
 		fileGenes[pair.LocusID] = pair.GeneID
 	}
 
+	var hasSequence bool
+	for _, locus := range def.Loci {
+		if locus.Type == LocusSequence {
+			hasSequence = true
+		}
+	}
+
 	for i, locus := range def.Loci {
+		if locus.Type == LocusSequence {
+			continue
+		}
+
 		geneID, ok := fileGenes[locus.ID]
 		if !ok {
 			return nil, fmt.Errorf("locus %s not found in data", locus.ID)
@@ -69,14 +93,34 @@ func DecodeGenome[Env any, State any](def *Definition[Env, State], data []byte) 
 		}
 	}
 
-	return &CategoricalGenome[Env, State]{
+	catG := &CategoricalGenome[Env, State]{
 		Definition:  def,
 		GeneIndices: indices,
-	}, nil
+	}
+
+	if hasSequence {
+		comp := make(CompositeGenome)
+		comp["categorical"] = catG
+		for _, locus := range def.Loci {
+			if locus.Type == LocusSequence {
+				if gData.Sequences == nil {
+					return nil, fmt.Errorf("sequence data missing")
+				}
+				seq, exists := gData.Sequences[locus.ID]
+				if !exists {
+					return nil, fmt.Errorf("sequence for locus %s missing", locus.ID)
+				}
+				comp[locus.ID] = seq
+			}
+		}
+		return comp, nil
+	}
+
+	return catG, nil
 }
 
-// SaveGenome saves a CategoricalGenome's gene IDs to a JSON file.
-func SaveGenome[Env any, State any](g *CategoricalGenome[Env, State], filename string) error {
+// SaveGenome saves a Genome's gene IDs to a JSON file.
+func SaveGenome(g Genome, filename string) error {
 	bytes, err := EncodeGenome(g)
 	if err != nil {
 		return err
@@ -85,7 +129,7 @@ func SaveGenome[Env any, State any](g *CategoricalGenome[Env, State], filename s
 }
 
 // LoadGenome loads gene IDs from a JSON file and maps them to indices in the provided Definition.
-func LoadGenome[Env any, State any](def *Definition[Env, State], filename string) (*CategoricalGenome[Env, State], error) {
+func LoadGenome[Env any, State any](def *Definition[Env, State], filename string) (Genome, error) {
 	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err

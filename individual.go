@@ -2,7 +2,6 @@ package nucleotide
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"os"
 )
@@ -24,9 +23,34 @@ func NewIndividual[Env any, State any](genome Genome) *Individual[Env, State] {
 	}
 }
 
+func (ind *Individual[Env, State]) getCategoricalGenome() *CategoricalGenome[Env, State] {
+	if cg, ok := ind.Genome.(*CategoricalGenome[Env, State]); ok {
+		return cg
+	}
+	if comp, ok := ind.Genome.(CompositeGenome); ok {
+		if cat, ok := comp["categorical"].(*CategoricalGenome[Env, State]); ok {
+			return cat
+		}
+	}
+	return nil
+}
+
+// GetSequence returns the SequenceGenome at a specific locus ID.
+func (ind *Individual[Env, State]) GetSequence(locusID string) SequenceGenome {
+	if comp, ok := ind.Genome.(CompositeGenome); ok {
+		if seq, ok := comp[locusID].(SequenceGenome); ok {
+			return seq
+		}
+	}
+	if seq, ok := ind.Genome.(SequenceGenome); ok {
+		return seq
+	}
+	return nil
+}
+
 // GetParameter returns the value of a parameter gene at a specific locus ID.
 func (ind *Individual[Env, State]) GetParameter(locusID string) interface{} {
-	if cg, ok := ind.Genome.(*CategoricalGenome[Env, State]); ok {
+	if cg := ind.getCategoricalGenome(); cg != nil {
 		for i, locus := range cg.Definition.Loci {
 			if locus.ID == locusID && locus.Type == LocusParameter {
 				geneIdx := cg.GeneIndices[i]
@@ -39,8 +63,8 @@ func (ind *Individual[Env, State]) GetParameter(locusID string) interface{} {
 
 // Express executes the behavioral genes based on the configuration loci, with access to the environment and a cancellable context.
 func (ind *Individual[Env, State]) Express(ctx context.Context, env Env) {
-	cg, ok := ind.Genome.(*CategoricalGenome[Env, State])
-	if !ok {
+	cg := ind.getCategoricalGenome()
+	if cg == nil {
 		return
 	}
 
@@ -116,10 +140,7 @@ func (ind *Individual[Env, State]) Express(ctx context.Context, env Env) {
 
 // ToJSON encodes the individual's genome to a JSON byte slice.
 func (ind *Individual[Env, State]) ToJSON() ([]byte, error) {
-	if cg, ok := ind.Genome.(*CategoricalGenome[Env, State]); ok {
-		return EncodeGenome(cg)
-	}
-	return nil, fmt.Errorf("individual genome is not categorical")
+	return EncodeGenome(ind.Genome)
 }
 
 // Save saves the individual's genome to a JSON file.

@@ -16,7 +16,7 @@ func (s TournamentSelector) Select(pop interface{}) interface{} {
 	// Use type switch to handle different Population types
 	// This is a bit clunky due to Go's interface/generics limitations,
 	// but it allows the Engine to use the selector.
-	
+
 	// A better way is to make TournamentSelector generic if we know the type E.
 	return nil // Placeholder, will fix below with a generic-friendly approach
 }
@@ -147,13 +147,9 @@ func (s GenericTournamentSelector[Env, State]) Select(pop interface{}) interface
 	return s.SelectTyped(pop.(Population[Env, State]))
 }
 
-func (s GenericTournamentSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+// Determine effective size (Adaptive Tournament & Diversity-based Sizing)
+func (s GenericTournamentSelector[Env, State]) DetermineTournamentSize(pop Population[Env, State]) int {
 	n := len(pop)
-	if n == 0 {
-		return nil
-	}
-
-	// 1. Determine effective size (Adaptive Tournament & Diversity-based Sizing)
 	size := s.Size
 	if s.GenerationProgress != nil && s.MinSize > 0 && s.MaxSize > 0 {
 		progress := s.GenerationProgress()
@@ -215,48 +211,65 @@ func (s GenericTournamentSelector[Env, State]) SelectTyped(pop Population[Env, S
 	if size > n {
 		size = n
 	}
+	return size
+}
+
+func (s GenericTournamentSelector[Env, State]) SelfAdaptiveSelectionSizeOverride(pop Population[Env, State]) (Population[Env, State], int) {
+	n := len(pop)
+	var tournament Population[Env, State]
+	candidate := pop[rand.Intn(n)]
+	k := s.Size
+
+	type SelfAdaptiveIndividual interface {
+		GetSelectionPreferences() (int, bool)
+	}
+	if sai, ok := interface{}(candidate).(SelfAdaptiveIndividual); ok {
+		if preferredK, ok := sai.GetSelectionPreferences(); ok {
+			k = preferredK
+		}
+	} else if sas, ok := interface{}(candidate.State).(SelfAdaptiveIndividual); ok {
+		if preferredK, ok := sas.GetSelectionPreferences(); ok {
+			k = preferredK
+		}
+	} else if cg, ok := candidate.Genome.(*CategoricalGenome[Env, State]); ok {
+		for i, locus := range cg.Definition.Loci {
+			if locus.ID == "TournamentSize" && locus.Type == LocusParameter {
+				geneIdx := cg.GeneIndices[i]
+				if val, ok := locus.PossibleGenes[geneIdx].Value.(int); ok {
+					k = val
+				}
+			}
+		}
+	}
+
+	if k < 1 {
+		k = 1
+	}
+	if k > n {
+		k = n
+	}
+
+	tournament = make(Population[Env, State], k)
+	tournament[0] = candidate
+	for i := 1; i < k; i++ {
+		tournament[i] = pop[rand.Intn(n)]
+	}
+	return tournament, k
+}
+
+func (s GenericTournamentSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+
+	// 1. Determine effective size (Adaptive Tournament & Diversity-based Sizing)
+	size := s.DetermineTournamentSize(pop)
 
 	// 1.5 Self-adaptive Selection Size Override
 	var tournament Population[Env, State]
 	if s.SelfAdaptive && n > 1 {
-		candidate := pop[rand.Intn(n)]
-		k := s.Size
-
-		type SelfAdaptiveIndividual interface {
-			GetSelectionPreferences() (int, bool)
-		}
-		if sai, ok := interface{}(candidate).(SelfAdaptiveIndividual); ok {
-			if preferredK, ok := sai.GetSelectionPreferences(); ok {
-				k = preferredK
-			}
-		} else if sas, ok := interface{}(candidate.State).(SelfAdaptiveIndividual); ok {
-			if preferredK, ok := sas.GetSelectionPreferences(); ok {
-				k = preferredK
-			}
-		} else if cg, ok := candidate.Genome.(*CategoricalGenome[Env, State]); ok {
-			for i, locus := range cg.Definition.Loci {
-				if locus.ID == "TournamentSize" && locus.Type == LocusParameter {
-					geneIdx := cg.GeneIndices[i]
-					if val, ok := locus.PossibleGenes[geneIdx].Value.(int); ok {
-						k = val
-					}
-				}
-			}
-		}
-
-		if k < 1 {
-			k = 1
-		}
-		if k > n {
-			k = n
-		}
-
-		tournament = make(Population[Env, State], k)
-		tournament[0] = candidate
-		for i := 1; i < k; i++ {
-			tournament[i] = pop[rand.Intn(n)]
-		}
-		size = k
+		tournament, size = s.SelfAdaptiveSelectionSizeOverride(pop)
 	} else {
 		// 2. Sample competitors (Unique Tournament & Hall of Fame Support)
 		tournament = make(Population[Env, State], size)
@@ -619,7 +632,7 @@ func (s RankSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Indiv
 	probs := make([]float64, n)
 	sum := 0.0
 	for i := 0; i < n; i++ {
-		p := (2.0 - sp) / float64(n) + (2.0 * float64(i) * (sp - 1.0)) / float64(n * (n - 1))
+		p := (2.0-sp)/float64(n) + (2.0*float64(i)*(sp-1.0))/float64(n*(n-1))
 		probs[i] = p
 		sum += p
 	}
