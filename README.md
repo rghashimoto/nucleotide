@@ -59,7 +59,7 @@ Instead of defining a single crossover or mutation strategy, `EngineConfig` supp
 ### 2. Individual Lifetime (Age) Tracking
 Individuals track their survival generation span using an `Age` property, initialized to `0` and automatically incremented at the end of each generation loop in the evolutionary engine. This age metric is used to model life expectancy and introduce biological selection penalties.
 
-### 3. State-of-the-Art Selection Operators
+### 3. Core Selection Operators
 All custom selectors implement the standard `Selector` interface:
 * **`RouletteWheelSelector[E, S]`**: Proportional fitness selection with optional `AutoShift` capability to handle negative fitness boundaries.
 * **`StochasticUniversalSamplingSelector[E, S]`**: Low-variance, zero-bias multi-pointer selection utilizing a single-spin buffer queue to ensure equal-interval selection across sequential calls.
@@ -75,7 +75,7 @@ The built-in tournament selector can be enhanced using several advanced, fully o
 
 ## Multi-Objective Optimization (NSGA-II)
 
-Nucleotide supports state-of-the-art **Multi-Objective Optimization** using the **NSGA-II (Nondominated Sorting Genetic Algorithm II)** algorithm out-of-the-box. This is ideal when you need to optimize conflicting metrics in tension, such as maximizing performance/throughput while minimizing cost/power consumption.
+Nucleotide supports **Multi-Objective Optimization** using the **NSGA-II (Nondominated Sorting Genetic Algorithm II)** algorithm. This is suitable when you need to optimize conflicting metrics in tension, such as maximizing performance/throughput while minimizing cost/power consumption.
 
 ### Key NSGA-II Features:
 - **Unified Fitness Signature**: Fitness is represented as `[]float64` to transparently scale from single-objective (length 1) to multi-objective environments.
@@ -111,6 +111,47 @@ engine.Run(def)
 paretoFrontier := engine.ParetoFrontier()
 ```
 
+## Parallel Island Model GA (MultiIslandEngine)
+
+Nucleotide supports the **Parallel Island Model Genetic Algorithm** via the **`MultiIslandEngine`** struct. Instead of evolving a single global population, the population is divided into isolated sub-populations (islands) that evolve independently in parallel in their own goroutines, periodically exchanging individuals (migration epochs) to maintain diversity and prevent premature convergence.
+
+### Key Island Model Features:
+- **True Concurrency**: Sub-populations evolve concurrently on separate Go routine threads, synchronizing at migration epochs using a synchronization barrier (`sync.WaitGroup`).
+- **Flexible Topologies**: Configure migration routing using **`TopologyRing`** (cyclic neighbor routing) or **`TopologyRandom`** (fully connected randomized target routing).
+- **Migration Policies**: Support **`PolicyBestReplaceWorst`** (exploitation-focused: copies best individuals to replace target worst) or **`PolicyRandomReplaceRandom`** (exploration-focused).
+- **3 Environment Configurations (Option A, B, and C)**:
+  - **Option A (Shared Static Env)**: All islands share the same single environment (the default).
+  - **Option B (Distributed Independent Envs)**: The `EnvFactory` instantiates independent environment simulator instances to prevent resource contention.
+  - **Option C (Heterogeneous Envs)**: The `EnvFactory` provides specialized configurations per island (e.g. different weather/difficulties), forcing the co-evolution of **generalist** solutions.
+
+### Code Example:
+```go
+config := nucleotide.EngineConfig[MyEnv, MyState]{
+    PopulationSize: 20,
+    MaxGenerations: 40,
+    FitnessFunc:    myFitnessFunc,
+    Selector:       nucleotide.GenericTournamentSelector[MyEnv, MyState]{Size: 3},
+}
+
+// Option C: Evolve across heterogeneous climates (Sunny, Windy, Rainy)
+envFactory := func(islandIndex int) MyEnv {
+    return climates[islandIndex]
+}
+
+miConfig := nucleotide.MultiIslandEngineConfig[MyEnv, MyState]{
+    NumIslands:        3,
+    MigrationInterval: 5, // migrate every 5 generations
+    MigrationRate:     2, // move top 2 individuals
+    MigrationTopology: nucleotide.TopologyRing,
+    MigrationPolicy:   nucleotide.PolicyBestReplaceWorst,
+    EngineConfig:      config,
+    EnvFactory:        envFactory,
+}
+
+miEngine, _ := nucleotide.NewMultiIslandEngine(miConfig)
+bestIndividual, _ := miEngine.Run(def)
+```
+
 ## Installation
 
 ```bash
@@ -143,6 +184,11 @@ Solve complex problems where multiple conflicting objectives must be optimized s
 Co-evolve categorical behaviors, parameters, internal configurations, and sequence delivery routes using name-based multi-chromosomal mapping.
 - **Example**: [comprehensive/main.go](file:///C:/Users/rafae/Desktop/golang/nucleotide/examples/comprehensive/main.go)
 - **Goal**: Evolve the optimal drone battery configuration, pre-flight safety actions, sequential execution flow, and customer visitation route order in a unified cargo delivery simulation with round-trip JSON serialization.
+
+### 6. Parallel Island Model GA (MultiIslandEngine)
+Evolve sub-populations in parallel concurrently in separate goroutines, periodically migrating selected individuals to maintain diversity across heterogeneous climates.
+- **Example**: [islands/main.go](file:///C:/Users/rafae/Desktop/golang/nucleotide/examples/islands/main.go)
+- **Goal**: Co-evolve a generalist drone dispatcher across three heterogeneous weather climates (Sunny, Windy, and Rainy) using concurrent island routines and ring migration epochs.
 
 ## Customization & Extensibility
 

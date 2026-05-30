@@ -284,6 +284,60 @@ func (e *Engine[Env, State]) selectMutator() Mutator {
 	return e.Config.Mutators[idx].Mutator
 }
 
+// Step executes a single evolutionary generation. It initializes the population if it's not already set.
+func (e *Engine[Env, State]) Step(def *Definition[Env, State]) error {
+	if e.Config.PopulationSize == 0 {
+		product := 1
+		if def != nil && len(def.Loci) > 0 {
+			for _, locus := range def.Loci {
+				geneCount := len(locus.PossibleGenes)
+				if geneCount > 0 {
+					product *= geneCount
+				}
+			}
+			e.Config.PopulationSize = 40 * product
+			e.Config.log("Info: PopulationSize not set, auto-deduced to %d based on definition loci", e.Config.PopulationSize)
+		} else {
+			e.Config.log("Warning: PopulationSize not set and no definition loci available, defaulting to 100")
+			e.Config.PopulationSize = 100
+		}
+	}
+
+	if len(e.Population) == 0 {
+		e.Population = e.Config.PopulationFunc(def, e.Config.PopulationSize)
+		e.evaluate()
+	}
+
+	diversity := e.genotypicDiversity()
+	e.DiversityHistory = append(e.DiversityHistory, diversity)
+
+	if e.Config.AdaptiveMutation && e.Config.OnMutationAdapted != nil {
+		scaler := 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
+		e.Config.OnMutationAdapted(e.Generation, diversity, scaler)
+	}
+
+	best := e.Population.Best()
+	var bestFit []float64
+	if best != nil {
+		bestFit = best.Fitness
+	}
+	fmt.Printf("Generation %d: Best Fitness = %v, Avg Fitness = %v, Diversity = %.1f%%\n",
+		e.Generation, bestFit, e.Population.AverageFitness(), diversity*100.0)
+
+	newPop, err := e.Config.Strategy.NextGeneration(e, def, e.Population)
+	if err != nil {
+		return err
+	}
+
+	e.Population = newPop
+	for _, ind := range e.Population {
+		ind.Age++
+	}
+	e.Generation++
+	e.evaluate()
+	return nil
+}
+
 // Run executes the genetic algorithm. It uses the provided definition to initialize the population if not already set.
 func (e *Engine[Env, State]) Run(def *Definition[Env, State]) (*Individual[Env, State], error) {
 	if e.Config.PopulationSize == 0 {
@@ -308,40 +362,13 @@ func (e *Engine[Env, State]) Run(def *Definition[Env, State]) (*Individual[Env, 
 
 	if len(e.Population) == 0 {
 		e.Population = e.Config.PopulationFunc(def, e.Config.PopulationSize)
+		e.evaluate()
 	}
-	e.Generation = 0
-
-	// Initial evaluation
-	e.evaluate()
 
 	for e.Generation < e.Config.MaxGenerations {
-		diversity := e.genotypicDiversity()
-		e.DiversityHistory = append(e.DiversityHistory, diversity)
-
-		if e.Config.AdaptiveMutation && e.Config.OnMutationAdapted != nil {
-			scaler := 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
-			e.Config.OnMutationAdapted(e.Generation, diversity, scaler)
-		}
-
-		best := e.Population.Best()
-		var bestFit []float64
-		if best != nil {
-			bestFit = best.Fitness
-		}
-		fmt.Printf("Generation %d: Best Fitness = %v, Avg Fitness = %v, Diversity = %.1f%%\n",
-			e.Generation, bestFit, e.Population.AverageFitness(), diversity*100.0)
-
-		newPop, err := e.Config.Strategy.NextGeneration(e, def, e.Population)
-		if err != nil {
+		if err := e.Step(def); err != nil {
 			return nil, err
 		}
-
-		e.Population = newPop
-		for _, ind := range e.Population {
-			ind.Age++
-		}
-		e.Generation++
-		e.evaluate()
 	}
 
 	return e.Population.Best(), nil
