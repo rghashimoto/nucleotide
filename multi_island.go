@@ -13,6 +13,9 @@ type MigrationTopology int
 const (
 	TopologyRing MigrationTopology = iota
 	TopologyRandom
+	TopologyTorus
+	TopologyHypercube
+	TopologyStar
 )
 
 // MigrationPolicy defines which individuals migrate and who they replace.
@@ -45,6 +48,12 @@ type MultiIslandEngine[Env any, State any] struct {
 func NewMultiIslandEngine[Env any, State any](config MultiIslandEngineConfig[Env, State]) (*MultiIslandEngine[Env, State], error) {
 	if config.NumIslands <= 0 {
 		return nil, fmt.Errorf("number of islands must be greater than 0")
+	}
+
+	if config.MigrationTopology == TopologyHypercube {
+		if (config.NumIslands & (config.NumIslands - 1)) != 0 {
+			return nil, fmt.Errorf("TopologyHypercube requires NumIslands to be a power of 2, got %d", config.NumIslands)
+		}
 	}
 
 	islands := make([]*Engine[Env, State], config.NumIslands)
@@ -197,66 +206,191 @@ func (m *MultiIslandEngine[Env, State]) migrate() {
 				return fitA > fitB // descending order
 			})
 			for r := 0; r < effRate; r++ {
-				selected[r] = NewIndividual[Env, State](cloned[r].Genome.Copy())
+				ind := NewIndividual[Env, State](cloned[r].Genome.Copy())
+				if len(cloned[r].Fitness) > 0 {
+					ind.Fitness = make([]float64, len(cloned[r].Fitness))
+					copy(ind.Fitness, cloned[r].Fitness)
+				}
+				selected[r] = ind
 			}
 		} else {
 			// Random
 			for r := 0; r < effRate; r++ {
-				selected[r] = NewIndividual[Env, State](island.Population[rand.Intn(popSize)].Genome.Copy())
+				source := island.Population[rand.Intn(popSize)]
+				ind := NewIndividual[Env, State](source.Genome.Copy())
+				if len(source.Fitness) > 0 {
+					ind.Fitness = make([]float64, len(source.Fitness))
+					copy(ind.Fitness, source.Fitness)
+				}
+				selected[r] = ind
 			}
 		}
 		migrants[i] = selected
 	}
 
-	// 2. Distribute migrants according to topology and replace in target
-	for i := 0; i < numIslands; i++ {
-		var targetIdx int
-		if m.Config.MigrationTopology == TopologyRing {
-			targetIdx = (i + 1) % numIslands
-		} else {
-			// Random target != current
-			targetIdx = rand.Intn(numIslands - 1)
-			if targetIdx >= i {
-				targetIdx++
-			}
-		}
+	// 2. Distribute cloned migrants into targets' incoming buffers
+	incoming := make([][]*Individual[Env, State], numIslands)
 
-		targetIsland := m.Islands[targetIdx]
-		targetPopSize := len(targetIsland.Population)
-		if targetPopSize == 0 {
+	for i := 0; i < numIslands; i++ {
+		targets := m.getNeighbors(i)
+		for _, targetIdx := range targets {
+			if targetIdx < 0 || targetIdx >= numIslands {
+				continue
+			}
+			// Clone migrants for this target
+			clonedMigrants := make([]*Individual[Env, State], len(migrants[i]))
+			for r, ind := range migrants[i] {
+				cInd := NewIndividual[Env, State](ind.Genome.Copy())
+				if len(ind.Fitness) > 0 {
+					cInd.Fitness = make([]float64, len(ind.Fitness))
+					copy(cInd.Fitness, ind.Fitness)
+				}
+				clonedMigrants[r] = cInd
+			}
+			incoming[targetIdx] = append(incoming[targetIdx], clonedMigrants...)
+		}
+	}
+
+	// 3. Integrate incoming migrants into each island's population
+	for i, island := range m.Islands {
+		inc := incoming[i]
+		if len(inc) == 0 {
 			continue
 		}
 
-		selectedMigrants := migrants[i]
-		effRate := len(selectedMigrants)
-		if effRate > targetPopSize {
-			effRate = targetPopSize
+		popSize := len(island.Population)
+		if popSize == 0 {
+			continue
+		}
+
+		effRate := len(inc)
+		if effRate > popSize {
+			effRate = popSize
+			// Keep only the best effRate if we have too many incoming
+			sort.Slice(inc, func(a, b int) bool {
+				fitA := 0.0
+				fitB := 0.0
+				if len(inc[a].Fitness) > 0 {
+					fitA = inc[a].Fitness[0]
+				}
+				if len(inc[b].Fitness) > 0 {
+					fitB = inc[b].Fitness[0]
+				}
+				return fitA > fitB // descending order
+			})
+			inc = inc[:effRate]
 		}
 
 		if m.Config.MigrationPolicy == PolicyBestReplaceWorst {
 			// Sort target population so we replace the worst
-			sort.Slice(targetIsland.Population, func(a, b int) bool {
+			sort.Slice(island.Population, func(a, b int) bool {
 				fitA := 0.0
 				fitB := 0.0
-				if len(targetIsland.Population[a].Fitness) > 0 {
-					fitA = targetIsland.Population[a].Fitness[0]
+				if len(island.Population[a].Fitness) > 0 {
+					fitA = island.Population[a].Fitness[0]
 				}
-				if len(targetIsland.Population[b].Fitness) > 0 {
-					fitB = targetIsland.Population[b].Fitness[0]
+				if len(island.Population[b].Fitness) > 0 {
+					fitB = island.Population[b].Fitness[0]
 				}
 				return fitA > fitB // descending order
 			})
 			// Replace starting from the end (lowest fitness)
 			for r := 0; r < effRate; r++ {
-				replaceIdx := targetPopSize - 1 - r
-				targetIsland.Population[replaceIdx] = selectedMigrants[r]
+				replaceIdx := popSize - 1 - r
+				island.Population[replaceIdx] = inc[r]
 			}
 		} else {
 			// Random replacement
 			for r := 0; r < effRate; r++ {
-				replaceIdx := rand.Intn(targetPopSize)
-				targetIsland.Population[replaceIdx] = selectedMigrants[r]
+				replaceIdx := rand.Intn(popSize)
+				island.Population[replaceIdx] = inc[r]
 			}
 		}
 	}
+}
+
+// getTorusDimensions factors n into grid dimensions W and H closest to a square.
+func getTorusDimensions(n int) (int, int) {
+	bestW := 1
+	bestH := n
+	minDiff := n
+	for w := 1; w*w <= n; w++ {
+		if n%w == 0 {
+			h := n / w
+			diff := h - w
+			if diff < minDiff {
+				minDiff = diff
+				bestW = w
+				bestH = h
+			}
+		}
+	}
+	return bestW, bestH
+}
+
+// getNeighbors returns neighbor indices for the current island index under the active topology.
+func (m *MultiIslandEngine[Env, State]) getNeighbors(i int) []int {
+	numIslands := len(m.Islands)
+	switch m.Config.MigrationTopology {
+	case TopologyRing:
+		return []int{(i + 1) % numIslands}
+
+	case TopologyRandom:
+		// Target distinct from self
+		targetIdx := rand.Intn(numIslands - 1)
+		if targetIdx >= i {
+			targetIdx++
+		}
+		return []int{targetIdx}
+
+	case TopologyTorus:
+		w, h := getTorusDimensions(numIslands)
+		x := i % w
+		y := i / w
+
+		northIdx := ((y - 1 + h) % h)*w + x
+		southIdx := ((y + 1) % h)*w + x
+		eastIdx := y*w + (x + 1)%w
+		westIdx := y*w + (x - 1 + w)%w
+
+		neighbors := []int{northIdx, southIdx, eastIdx, westIdx}
+		unique := make([]int, 0, 4)
+		seen := make(map[int]bool)
+		seen[i] = true // Don't migrate to self
+		for _, nbr := range neighbors {
+			if !seen[nbr] {
+				seen[nbr] = true
+				unique = append(unique, nbr)
+			}
+		}
+		return unique
+
+	case TopologyHypercube:
+		dim := 0
+		for (1 << dim) < numIslands {
+			dim++
+		}
+		unique := make([]int, 0, dim)
+		for d := 0; d < dim; d++ {
+			nbr := i ^ (1 << d)
+			if nbr < numIslands {
+				unique = append(unique, nbr)
+			}
+		}
+		return unique
+
+	case TopologyStar:
+		if i == 0 {
+			// Hub connects to all spokes
+			unique := make([]int, numIslands-1)
+			for idx := 1; idx < numIslands; idx++ {
+				unique[idx-1] = idx
+			}
+			return unique
+		}
+		// Spokes connect only to the hub
+		return []int{0}
+	}
+
+	return []int{(i + 1) % numIslands}
 }
