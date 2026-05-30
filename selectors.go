@@ -391,201 +391,7 @@ func (s GenericTournamentSelector[Env, State]) SelectTyped(pop Population[Env, S
 	return competitors[0].ind
 }
 
-// RouletteWheelSelector selects individuals proportional to their fitness.
-type RouletteWheelSelector[Env any, State any] struct {
-	AutoShift bool // If true, shifts negative fitnesses so minimum is 0.
-}
-
-func (s RouletteWheelSelector[Env, State]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[Env, State]))
-}
-
-func (s RouletteWheelSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
-	n := len(pop)
-	if n == 0 {
-		return nil
-	}
-	if n == 1 {
-		return pop[0]
-	}
-
-	fitnesses := make([]float64, n)
-	var minFit float64
-	if len(pop[0].Fitness) > 0 {
-		minFit = pop[0].Fitness[0]
-	}
-	for i, ind := range pop {
-		var fit float64
-		if len(ind.Fitness) > 0 {
-			fit = ind.Fitness[0]
-		}
-		fitnesses[i] = fit
-		if fit < minFit {
-			minFit = fit
-		}
-	}
-
-	if s.AutoShift || minFit < 0 {
-		shift := 0.0
-		if minFit < 0 {
-			shift = -minFit
-		} else if s.AutoShift {
-			shift = minFit
-		}
-		shift += 0.0001
-		for i := range fitnesses {
-			fitnesses[i] += shift
-		}
-	}
-
-	sum := 0.0
-	for _, f := range fitnesses {
-		if f < 0 {
-			f = 0
-		}
-		sum += f
-	}
-
-	if sum <= 0 {
-		return pop[rand.Intn(n)]
-	}
-
-	r := rand.Float64() * sum
-	cumulative := 0.0
-	for i, f := range fitnesses {
-		if f < 0 {
-			f = 0
-		}
-		cumulative += f
-		if r <= cumulative {
-			return pop[i]
-		}
-	}
-
-	return pop[n-1]
-}
-
-// StochasticUniversalSamplingSelector uses a single spin to select multiple parents with minimal bias.
-type StochasticUniversalSamplingSelector[Env any, State any] struct {
-	AutoShift bool
-	queue     *[]*Individual[Env, State]
-	mu        *sync.Mutex
-}
-
-func (s *StochasticUniversalSamplingSelector[Env, State]) Select(pop interface{}) interface{} {
-	return s.SelectTyped(pop.(Population[Env, State]))
-}
-
-func (s *StochasticUniversalSamplingSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
-	n := len(pop)
-	if n == 0 {
-		return nil
-	}
-
-	if s.mu == nil {
-		s.mu = &sync.Mutex{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.queue == nil {
-		s.queue = &[]*Individual[Env, State]{}
-	}
-
-	if len(*s.queue) == 0 {
-		s.fillQueue(pop)
-	}
-
-	if len(*s.queue) > 0 {
-		val := (*s.queue)[0]
-		*s.queue = (*s.queue)[1:]
-		return val
-	}
-
-	return pop[rand.Intn(n)]
-}
-
-func (s *StochasticUniversalSamplingSelector[Env, State]) fillQueue(pop Population[Env, State]) {
-	n := len(pop)
-	if n == 0 {
-		return
-	}
-
-	fitnesses := make([]float64, n)
-	var minFit float64
-	if len(pop[0].Fitness) > 0 {
-		minFit = pop[0].Fitness[0]
-	}
-	for i, ind := range pop {
-		var fit float64
-		if len(ind.Fitness) > 0 {
-			fit = ind.Fitness[0]
-		}
-		fitnesses[i] = fit
-		if fit < minFit {
-			minFit = fit
-		}
-	}
-
-	if s.AutoShift || minFit < 0 {
-		shift := 0.0
-		if minFit < 0 {
-			shift = -minFit
-		} else if s.AutoShift {
-			shift = minFit
-		}
-		shift += 0.0001
-		for i := range fitnesses {
-			fitnesses[i] += shift
-		}
-	}
-
-	sum := 0.0
-	for _, f := range fitnesses {
-		if f < 0 {
-			f = 0
-		}
-		sum += f
-	}
-
-	if sum <= 0 {
-		q := make([]*Individual[Env, State], n)
-		for i := 0; i < n; i++ {
-			q[i] = pop[rand.Intn(n)]
-		}
-		*s.queue = q
-		return
-	}
-
-	ptrDistance := sum / float64(n)
-	start := rand.Float64() * ptrDistance
-
-	q := make([]*Individual[Env, State], 0, n)
-	currSum := 0.0
-	idx := 0
-
-	for i := 0; i < n; i++ {
-		pointer := start + float64(i)*ptrDistance
-		for currSum < pointer && idx < n {
-			f := fitnesses[idx]
-			if f < 0 {
-				f = 0
-			}
-			currSum += f
-			if currSum >= pointer {
-				break
-			}
-			idx++
-			if idx >= n {
-				idx = n - 1
-				break
-			}
-		}
-		q = append(q, pop[idx])
-	}
-
-	*s.queue = q
-}
+// Old selectors removed to use new implementations at the end of the file.
 
 // RankSelector selects individuals based on their fitness rank rather than absolute fitness.
 type RankSelector[Env any, State any] struct {
@@ -619,14 +425,7 @@ func (s RankSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Indiv
 	sortedPop := make(Population[Env, State], n)
 	copy(sortedPop, pop)
 	sort.Slice(sortedPop, func(i, j int) bool {
-		var f1, f2 float64
-		if len(sortedPop[i].Fitness) > 0 {
-			f1 = sortedPop[i].Fitness[0]
-		}
-		if len(sortedPop[j].Fitness) > 0 {
-			f2 = sortedPop[j].Fitness[0]
-		}
-		return f1 < f2
+		return getSyntheticScalarFitness(sortedPop[i]) < getSyntheticScalarFitness(sortedPop[j])
 	})
 
 	probs := make([]float64, n)
@@ -712,4 +511,279 @@ func (s BoltzmannSelector[Env, State]) SelectTyped(pop Population[Env, State]) *
 	}
 
 	return pop[n-1]
+}
+
+// getSyntheticScalarFitness computes a positive scalar fitness value for individuals.
+// For NSGA-II populations, it maps Nondominated Rank and CrowdingDistance into a positive scalar:
+//   SyntheticFitness = 1 / (Rank + 1) + CrowdingDistance / (1 + CrowdingDistance)
+// For single-objective populations, it returns the Fitness[0] directly.
+func getSyntheticScalarFitness[Env any, State any](ind *Individual[Env, State]) float64 {
+	if len(ind.Fitness) > 1 {
+		rankVal := float64(ind.Rank)
+		crowdVal := ind.CrowdingDistance
+		if crowdVal < 0 {
+			crowdVal = 0
+		}
+		return 1.0/(rankVal+1.0) + crowdVal/(1.0+crowdVal)
+	}
+	if len(ind.Fitness) > 0 {
+		return ind.Fitness[0]
+	}
+	return 0.0
+}
+
+// getShiftedScalarFitnesses computes shifting offsets so that all fitnesses are strictly positive.
+func getShiftedScalarFitnesses[Env any, State any](pop Population[Env, State]) []float64 {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	rawFits := make([]float64, n)
+	minFit := getSyntheticScalarFitness(pop[0])
+	for i, ind := range pop {
+		f := getSyntheticScalarFitness(ind)
+		rawFits[i] = f
+		if f < minFit {
+			minFit = f
+		}
+	}
+
+	shifted := make([]float64, n)
+	var offset float64 = 0.0
+	if minFit <= 0 {
+		offset = math.Abs(minFit) + 0.1
+	}
+
+	for i, f := range rawFits {
+		shifted[i] = f + offset
+	}
+	return shifted
+}
+
+// RouletteWheelSelector selects individuals proportionally to their fitness.
+type RouletteWheelSelector[Env any, State any] struct {
+	AutoShift bool
+}
+
+// Select implements the Selector interface.
+func (s RouletteWheelSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
+}
+
+// SelectTyped performs type-safe selection using a roulette wheel model.
+func (s RouletteWheelSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	shifted := getShiftedScalarFitnesses(pop)
+	sum := 0.0
+	for _, f := range shifted {
+		sum += f
+	}
+
+	if sum <= 0 {
+		return pop[rand.Intn(n)]
+	}
+
+	r := rand.Float64() * sum
+	cumulative := 0.0
+	for i, f := range shifted {
+		cumulative += f
+		if r <= cumulative {
+			return pop[i]
+		}
+	}
+	return pop[n-1]
+}
+
+// StochasticUniversalSamplingSelector selects individuals using SUS (Stochastic Universal Sampling).
+// Since the Selector interface selects one-by-one, this selector caches selections globally
+// and refills the cache by performing a full SUS spin whenever the cache is fully consumed.
+type StochasticUniversalSamplingSelector[Env any, State any] struct {
+	AutoShift    bool
+	mu           sync.Mutex
+	cachedSelect []*Individual[Env, State]
+}
+
+// Select implements the Selector interface.
+func (s *StochasticUniversalSamplingSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
+}
+
+// SelectTyped performs type-safe selection using Stochastic Universal Sampling.
+func (s *StochasticUniversalSamplingSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	if len(s.cachedSelect) == 0 {
+		s.refillCache(pop)
+	}
+
+	if len(s.cachedSelect) == 0 {
+		return pop[rand.Intn(n)]
+	}
+
+	idx := len(s.cachedSelect) - 1
+	selected := s.cachedSelect[idx]
+	s.cachedSelect = s.cachedSelect[:idx]
+	return selected
+}
+
+func (s *StochasticUniversalSamplingSelector[Env, State]) refillCache(pop Population[Env, State]) {
+	n := len(pop)
+	shifted := getShiftedScalarFitnesses(pop)
+	sum := 0.0
+	for _, f := range shifted {
+		sum += f
+	}
+
+	if sum <= 0 {
+		s.cachedSelect = make([]*Individual[Env, State], n)
+		for i := 0; i < n; i++ {
+			s.cachedSelect[i] = pop[rand.Intn(n)]
+		}
+		return
+	}
+
+	cumSums := make([]float64, n)
+	currentSum := 0.0
+	for i, f := range shifted {
+		currentSum += f
+		cumSums[i] = currentSum
+	}
+
+	pointerDist := sum / float64(n)
+	startPointer := rand.Float64() * pointerDist
+
+	s.cachedSelect = make([]*Individual[Env, State], 0, n)
+	currIdx := 0
+
+	for i := 0; i < n; i++ {
+		ptr := startPointer + float64(i)*pointerDist
+		for currIdx < n && ptr > cumSums[currIdx] {
+			currIdx++
+		}
+		if currIdx >= n {
+			currIdx = n - 1
+		}
+		s.cachedSelect = append(s.cachedSelect, pop[currIdx])
+	}
+
+	rand.Shuffle(len(s.cachedSelect), func(i, j int) {
+		s.cachedSelect[i], s.cachedSelect[j] = s.cachedSelect[j], s.cachedSelect[i]
+	})
+}
+
+// LinearRankSelector selects individuals based on their sorted rank probability.
+type LinearRankSelector[Env any, State any] struct {
+	SelectionPressure float64 // Selection pressure parameter 's' in [1.0, 2.0] (defaults to 1.5)
+}
+
+// Select implements the Selector interface.
+func (s LinearRankSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
+}
+
+// SelectTyped performs type-safe selection based on linear rank.
+func (s LinearRankSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	sp := s.SelectionPressure
+	if sp < 1.0 || sp > 2.0 {
+		sp = 1.5
+	}
+
+	sortedPop := make(Population[Env, State], n)
+	copy(sortedPop, pop)
+	sort.Slice(sortedPop, func(i, j int) bool {
+		return getSyntheticScalarFitness(sortedPop[i]) < getSyntheticScalarFitness(sortedPop[j])
+	})
+
+	probs := make([]float64, n)
+	sum := 0.0
+	for i := 0; i < n; i++ {
+		p := (2.0-sp)/float64(n) + (2.0*float64(i)*(sp-1.0))/(float64(n)*float64(n-1))
+		probs[i] = p
+		sum += p
+	}
+
+	r := rand.Float64() * sum
+	cumulative := 0.0
+	for i, p := range probs {
+		cumulative += p
+		if r <= cumulative {
+			return sortedPop[i]
+		}
+	}
+	return sortedPop[n-1]
+}
+
+// ExponentialRankSelector selects individuals based on an exponentially decaying rank.
+type ExponentialRankSelector[Env any, State any] struct {
+	C float64 // Base parameter 'c' in (0.0, 1.0) (defaults to 0.95)
+}
+
+// Select implements the Selector interface.
+func (s ExponentialRankSelector[Env, State]) Select(pop interface{}) interface{} {
+	return s.SelectTyped(pop.(Population[Env, State]))
+}
+
+// SelectTyped performs type-safe selection based on exponential rank.
+func (s ExponentialRankSelector[Env, State]) SelectTyped(pop Population[Env, State]) *Individual[Env, State] {
+	n := len(pop)
+	if n == 0 {
+		return nil
+	}
+	if n == 1 {
+		return pop[0]
+	}
+
+	c := s.C
+	if c <= 0.0 || c >= 1.0 {
+		c = 0.95
+	}
+
+	sortedPop := make(Population[Env, State], n)
+	copy(sortedPop, pop)
+	sort.Slice(sortedPop, func(i, j int) bool {
+		return getSyntheticScalarFitness(sortedPop[i]) < getSyntheticScalarFitness(sortedPop[j])
+	})
+
+	probs := make([]float64, n)
+	sum := 0.0
+	factor := (c - 1.0) / (math.Pow(c, float64(n)) - 1.0)
+	for i := 0; i < n; i++ {
+		p := factor * math.Pow(c, float64(n-1-i))
+		probs[i] = p
+		sum += p
+	}
+
+	r := rand.Float64() * sum
+	cumulative := 0.0
+	for i, p := range probs {
+		cumulative += p
+		if r <= cumulative {
+			return sortedPop[i]
+		}
+	}
+	return sortedPop[n-1]
 }
