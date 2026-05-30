@@ -11,8 +11,11 @@ It introduces the concept of **Categorical Genomes**, where evolution doesn't ju
     - **Behavioral**: Genes that execute logic via callbacks.
     - **Parameter**: Genes that provide data values for behavioral genes.
     - **Configuration**: Internal framework settings that can themselves be evolved.
+    - **Sequence**: Slots that define a permutation range to evolve orderings, routing sequences, or schedules.
+- **Multi-Chromosomal Genomes (`CompositeGenome`)**: Map multiple distinct chromosomes by name to evolve complex combinations of behavioral categorical genes, configurations, and independent sequences simultaneously.
+- **Permutation Optimization (`SequenceGenome`)**: Native support for permutation sequence evolution powered by Partially Mapped Crossover (PMX) and Swap Mutation to guarantee duplicate-free evolution.
+- **Unified Robust Serialization**: Save any winning genome (`BitGenome`, `FloatGenome`, `SequenceGenome`, `CategoricalGenome`, `CompositeGenome`) to JSON using stable IDs, and reload them seamlessly in production.
 - **Context-Aware Expression**: Execute evolved individuals with `context.Context` for safe cancellation and timeouts.
-- **Robust Serialization**: Save winning genomes to JSON using stable IDs. Load them in production with zero friction.
 - **Modern Go**: Built with Go 1.22+ and fully leverages Generics.
 
 ## Core Concepts: Loci vs. Genes
@@ -135,6 +138,11 @@ Evolve agents that interact with a dynamic environment. Genes are functions that
 Solve complex problems where multiple conflicting objectives must be optimized simultaneously (e.g. maximizing value while minimizing weight).
 - **Example**: [multiobjective/main.go](file:///C:/Users/rafae/Desktop/golang/nucleotide/examples/multiobjective/main.go)
 - **Goal**: Find the non-dominated Pareto Frontier trade-offs for a dual-objective Knapsack problem.
+
+### 5. Comprehensive Usage (Autonomous Routing & Multi-Chromosomal Evolution)
+Co-evolve categorical behaviors, parameters, internal configurations, and sequence delivery routes using name-based multi-chromosomal mapping.
+- **Example**: [comprehensive/main.go](file:///C:/Users/rafae/Desktop/golang/nucleotide/examples/comprehensive/main.go)
+- **Goal**: Evolve the optimal drone battery configuration, pre-flight safety actions, sequential execution flow, and customer visitation route order in a unified cargo delivery simulation with round-trip JSON serialization.
 
 ## Customization & Extensibility
 

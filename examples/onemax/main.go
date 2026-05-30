@@ -44,6 +44,7 @@ func main() {
 		Elitism:           1,
 		Env:               EmptyEnv{},
 		AgeBiasedMutation: true,
+		Verbose:           true,
 	}
 	engine, err := nucleotide.NewEngine[EmptyEnv, struct{}](config)
 	if err != nil {

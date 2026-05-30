@@ -2,6 +2,7 @@ package nucleotide
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 	"reflect"
@@ -76,23 +77,23 @@ func TopNElitism[Env any, State any](pop Population[Env, State], size int) Popul
 
 // EngineConfig holds the configuration for the evolution engine.
 type EngineConfig[Env any, State any] struct {
-	PopulationSize       int
-	MaxGenerations       int
-	FitnessFunc          FitnessFunc[Env, State]
-	Selector             Selector
-	Crossoverers         []WeightedCrossoverer
-	Mutators             []WeightedMutator
-	Elitism              int
-	ElitismFunc          ElitismFunc[Env, State]
-	PopulationFunc       PopulationFunc[Env, State]
-	Env                  Env
-	ObjectiveDirections  []ObjectiveDirection
-	Strategy             GenerationStrategy[Env, State]
+	PopulationSize      int
+	MaxGenerations      int
+	FitnessFunc         FitnessFunc[Env, State]
+	Selector            Selector
+	Crossoverers        []WeightedCrossoverer
+	Mutators            []WeightedMutator
+	Elitism             int
+	ElitismFunc         ElitismFunc[Env, State]
+	PopulationFunc      PopulationFunc[Env, State]
+	Env                 Env
+	ObjectiveDirections []ObjectiveDirection
+	Strategy            GenerationStrategy[Env, State]
 
 	// Adaptive Mutation configuration
-	AdaptiveMutation     bool
-	MaxMutationScaler    float64
-	OnMutationAdapted    func(generation int, diversity float64, currentScaler float64)
+	AdaptiveMutation  bool
+	MaxMutationScaler float64
+	OnMutationAdapted func(generation int, diversity float64, currentScaler float64)
 
 	// Age-Biased Mutation configuration
 	AgeBiasedMutation    bool
@@ -100,9 +101,18 @@ type EngineConfig[Env any, State any] struct {
 	AgeMutationScaler    float64
 
 	// Concurrency settings
-	ConcurrencyLimit           int
-	DisableParallelFitness     bool
+	ConcurrencyLimit            int
+	DisableParallelFitness      bool
 	DisableParallelReproduction bool
+
+	//Logging and debugging
+	Verbose bool
+}
+
+func (c *EngineConfig[Env, State]) log(format string, args ...interface{}) {
+	if c.Verbose {
+		log.Printf(format, args...)
+	}
 }
 
 // Engine orchestrates the genetic algorithm process.
@@ -126,16 +136,19 @@ func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env
 
 	// Default Selector fallback
 	if config.Selector == nil {
+		config.log("Warning: No Selector specified in EngineConfig, defaulting to GenericTournamentSelector with size 3")
 		config.Selector = GenericTournamentSelector[Env, State]{Size: 3}
 	}
 
 	// Default Crossoverer fallback
 	if len(config.Crossoverers) == 0 {
+		config.log("Warning: No Crossoverers specified in EngineConfig, defaulting to DefaultCrossoverer")
 		config.Crossoverers = []WeightedCrossoverer{{Crossoverer: DefaultCrossoverer{}}}
 	}
 
 	// Default Mutator fallback
 	if len(config.Mutators) == 0 {
+		config.log("Warning: No Mutators specified in EngineConfig, defaulting to DefaultMutator")
 		config.Mutators = []WeightedMutator{{Mutator: DefaultMutator{}}}
 	}
 
@@ -143,6 +156,7 @@ func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env
 	crossoverWeightSum := 0.0
 	for _, wc := range config.Crossoverers {
 		if wc.Weight < 0 {
+			config.log("Error: Crossoverer weight must not be negative")
 			return nil, fmt.Errorf("crossoverer weight must not be negative")
 		}
 		crossoverWeightSum += wc.Weight
@@ -152,23 +166,33 @@ func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env
 	mutatorWeightSum := 0.0
 	for _, wm := range config.Mutators {
 		if wm.Weight < 0 {
+			config.log("Error: Mutator weight must not be negative")
 			return nil, fmt.Errorf("mutator weight must not be negative")
 		}
 		mutatorWeightSum += wm.Weight
 	}
 
-	if config.ElitismFunc == nil && config.Elitism > 0 {
-		config.ElitismFunc = BestIndividualElitism[Env, State]
+	if config.ElitismFunc == nil {
+		if config.Elitism == 1 {
+			config.log("Info: Elitism set to 1, using BestIndividualElitism")
+			config.ElitismFunc = BestIndividualElitism[Env, State]
+		} else if config.Elitism > 1 {
+			config.log("Info: Elitism set to %d, using TopNElitism", config.Elitism)
+			config.ElitismFunc = TopNElitism[Env, State]
+		}
 	}
 	if config.PopulationFunc == nil {
+		config.log("Warning: No PopulationFunc specified in EngineConfig, defaulting to DefaultPopulationFunc")
 		config.PopulationFunc = DefaultPopulationFunc[Env, State]
 	}
 
 	// Auto-deduce strategy if nil
 	if config.Strategy == nil {
 		if len(config.ObjectiveDirections) > 1 {
+			config.log("Info: Multiple objective directions detected, using NSGA2Generation strategy")
 			config.Strategy = &NSGA2Generation[Env, State]{}
 		} else {
+			config.log("Info: Single objective optimization detected, using StandardGeneration strategy")
 			config.Strategy = &StandardGeneration[Env, State]{}
 		}
 	}
@@ -180,16 +204,20 @@ func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env
 	}
 
 	if e.Config.MaxMutationScaler <= 0 {
+		config.log("Info: MaxMutationScaler not set or invalid, defaulting to 3.0")
 		e.Config.MaxMutationScaler = 3.0
 	}
 	if e.Config.AgeMutationThreshold <= 0 {
+		config.log("Info: AgeMutationThreshold not set or invalid, defaulting to 5 generations")
 		e.Config.AgeMutationThreshold = 5
 	}
 	if e.Config.AgeMutationScaler <= 0 {
+		config.log("Info: AgeMutationScaler not set or invalid, defaulting to 2.0")
 		e.Config.AgeMutationScaler = 2.0
 	}
 
 	if err := e.Config.Strategy.Initialize(e); err != nil {
+		config.log("Error initializing strategy: %v", err)
 		return nil, err
 	}
 
@@ -268,7 +296,12 @@ func (e *Engine[Env, State]) Run(def *Definition[Env, State]) (*Individual[Env, 
 				}
 			}
 			e.Config.PopulationSize = 40 * product
+			e.Config.log("Info: PopulationSize not set, auto-deduced to %d based on definition loci", e.Config.PopulationSize)
+			if e.Config.PopulationSize > 10000 {
+				e.Config.log("Warning: Auto-deduced PopulationSize is very large (%d), consider setting a smaller size in EngineConfig", e.Config.PopulationSize)
+			}
 		} else {
+			e.Config.log("Warning: PopulationSize not set and no definition loci available, defaulting to 100")
 			e.Config.PopulationSize = 100 // Safe default fallback if no definition or loci defined
 		}
 	}

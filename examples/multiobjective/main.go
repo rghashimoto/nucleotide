@@ -24,7 +24,7 @@ func main() {
 		ItemWeights: make([]float64, genomeSize),
 	}
 	for i := 0; i < genomeSize; i++ {
-		env.ItemValues[i] = float64(10 + i*2)            // Values range from 10 to 48
+		env.ItemValues[i] = float64(10 + i*2)              // Values range from 10 to 48
 		env.ItemWeights[i] = float64(5 + (genomeSize-i)*3) // Weights range from 5 to 62 (conflicting)
 	}
 
@@ -100,5 +100,17 @@ func main() {
 			}
 		}
 		fmt.Printf("%-5d | %-12.1f | %-12.1f | %-30s\n", i+1, ind.Fitness[0], ind.Fitness[1], genesStr)
+	}
+
+	//Save Genome of best solution (highest value with lowest weight)
+	if len(pareto) > 0 {
+		best := pareto[0] // First in Pareto frontier is often a good compromise
+		fmt.Printf("\nBest solution (highest value with lowest weight):\n")
+		fmt.Printf("Total Value: %.1f, Total Weight: %.1f\n", best.Fitness[0], best.Fitness[1])
+		fmt.Printf("Genome: %v\n", best.Genome)
+		err := nucleotide.SaveGenome(best.Genome, "best_solution_genome.json")
+		if err != nil {
+			fmt.Printf("Error saving best solution genome: %v\n", err)
+		}
 	}
 }

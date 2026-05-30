@@ -121,3 +121,59 @@ func TestMemorySerialization(t *testing.T) {
 		t.Errorf("Mismatch after decode")
 	}
 }
+
+func TestSerialization_AllGenomeTypes(t *testing.T) {
+	// 1. BitGenome
+	bitG := BitGenome{true, false, true}
+	bitBytes, err := EncodeGenome(bitG)
+	if err != nil {
+		t.Fatalf("BitGenome encode failed: %v", err)
+	}
+	bitDec, err := DecodeGenome[TestEnv, struct{}](nil, bitBytes)
+	if err != nil {
+		t.Fatalf("BitGenome decode failed: %v", err)
+	}
+	bitDecoded, ok := bitDec.(BitGenome)
+	if !ok {
+		t.Fatalf("Expected BitGenome, got %T", bitDec)
+	}
+	if len(bitDecoded) != 3 || bitDecoded[0] != true || bitDecoded[1] != false || bitDecoded[2] != true {
+		t.Errorf("BitGenome decoded content mismatch: %v", bitDecoded)
+	}
+
+	// 2. FloatGenome
+	floatG := FloatGenome{1.5, -2.4, 0.0}
+	floatBytes, err := EncodeGenome(floatG)
+	if err != nil {
+		t.Fatalf("FloatGenome encode failed: %v", err)
+	}
+	floatDec, err := DecodeGenome[TestEnv, struct{}](nil, floatBytes)
+	if err != nil {
+		t.Fatalf("FloatGenome decode failed: %v", err)
+	}
+	floatDecoded, ok := floatDec.(FloatGenome)
+	if !ok {
+		t.Fatalf("Expected FloatGenome, got %T", floatDec)
+	}
+	if len(floatDecoded) != 3 || floatDecoded[0] != 1.5 || floatDecoded[1] != -2.4 || floatDecoded[2] != 0.0 {
+		t.Errorf("FloatGenome decoded content mismatch: %v", floatDecoded)
+	}
+
+	// 3. Standalone SequenceGenome
+	seqG := SequenceGenome{4, 2, 1, 3, 5}
+	seqBytes, err := EncodeGenome(seqG)
+	if err != nil {
+		t.Fatalf("SequenceGenome encode failed: %v", err)
+	}
+	seqDec, err := DecodeGenome[TestEnv, struct{}](nil, seqBytes)
+	if err != nil {
+		t.Fatalf("SequenceGenome decode failed: %v", err)
+	}
+	seqDecoded, ok := seqDec.(SequenceGenome)
+	if !ok {
+		t.Fatalf("Expected SequenceGenome, got %T", seqDec)
+	}
+	if len(seqDecoded) != 5 || seqDecoded[0] != 4 || seqDecoded[1] != 2 || seqDecoded[2] != 1 || seqDecoded[3] != 3 || seqDecoded[4] != 5 {
+		t.Errorf("SequenceGenome decoded content mismatch: %v", seqDecoded)
+	}
+}

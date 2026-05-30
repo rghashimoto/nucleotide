@@ -12,39 +12,48 @@ type LocusGenePair struct {
 	GeneID  string `json:"gene_id"`
 }
 
-// GenomeData is the serializable format of a CategoricalGenome using IDs.
+// GenomeData is the serializable format of any Genome.
 type GenomeData struct {
-	Genes     []LocusGenePair           `json:"genes"`
+	Type      string                    `json:"type,omitempty"`
+	Genes     []LocusGenePair           `json:"genes,omitempty"`
 	Sequences map[string]SequenceGenome `json:"sequences,omitempty"`
+	Bits      BitGenome                 `json:"bits,omitempty"`
+	Floats    FloatGenome               `json:"floats,omitempty"`
+	Sequence  SequenceGenome            `json:"sequence,omitempty"`
 }
 
 // EncodeGenome encodes a Genome's gene IDs into a JSON byte slice.
 func EncodeGenome(g Genome) ([]byte, error) {
-	var pairs []LocusGenePair
-	var seqs map[string]SequenceGenome
+	data := GenomeData{}
 
-	if comp, ok := g.(CompositeGenome); ok {
-		if serializable, ok := comp["categorical"].(interface{ GetGenePairs() []LocusGenePair }); ok {
-			pairs = serializable.GetGenePairs()
+	switch concrete := g.(type) {
+	case BitGenome:
+		data.Type = "bit"
+		data.Bits = concrete
+	case FloatGenome:
+		data.Type = "float"
+		data.Floats = concrete
+	case SequenceGenome:
+		data.Type = "sequence"
+		data.Sequence = concrete
+	case CompositeGenome:
+		data.Type = "composite"
+		if serializable, ok := concrete["categorical"].(interface{ GetGenePairs() []LocusGenePair }); ok {
+			data.Genes = serializable.GetGenePairs()
 		}
-		seqs = make(map[string]SequenceGenome)
-		for k, sub := range comp {
+		data.Sequences = make(map[string]SequenceGenome)
+		for k, sub := range concrete {
 			if seq, ok := sub.(SequenceGenome); ok {
-				seqs[k] = seq
+				data.Sequences[k] = seq
 			}
 		}
-	} else if serializable, ok := g.(interface{ GetGenePairs() []LocusGenePair }); ok {
-		pairs = serializable.GetGenePairs()
-	} else {
-		return nil, fmt.Errorf("unsupported genome type for encoding: %T", g)
-	}
-
-	data := GenomeData{
-		Genes: pairs,
-	}
-
-	if len(seqs) > 0 {
-		data.Sequences = seqs
+	default:
+		if serializable, ok := g.(interface{ GetGenePairs() []LocusGenePair }); ok {
+			data.Type = "categorical"
+			data.Genes = serializable.GetGenePairs()
+		} else {
+			return nil, fmt.Errorf("unsupported genome type for encoding: %T", g)
+		}
 	}
 
 	return json.MarshalIndent(data, "", "  ")
@@ -55,6 +64,29 @@ func DecodeGenome[Env any, State any](def *Definition[Env, State], data []byte) 
 	var gData GenomeData
 	if err := json.Unmarshal(data, &gData); err != nil {
 		return nil, err
+	}
+
+	gType := gData.Type
+	if gType == "" {
+		// Infer type for backward compatibility
+		if len(gData.Bits) > 0 {
+			gType = "bit"
+		} else if len(gData.Floats) > 0 {
+			gType = "float"
+		} else if len(gData.Sequence) > 0 {
+			gType = "sequence"
+		} else {
+			gType = "categorical"
+		}
+	}
+
+	switch gType {
+	case "bit":
+		return gData.Bits, nil
+	case "float":
+		return gData.Floats, nil
+	case "sequence":
+		return gData.Sequence, nil
 	}
 
 	indices := make([]int, len(def.Loci))
