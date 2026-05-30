@@ -3,6 +3,7 @@ package nucleotide
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"sync"
 )
@@ -30,9 +31,8 @@ func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], d
 	}
 
 	globalScaler := 1.0
-	if e.Config.AdaptiveMutation {
-		diversity := e.genotypicDiversity()
-		globalScaler = 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
+	if e.Config.AdaptiveMutation && e.Config.MutationController != nil {
+		globalScaler = e.Config.MutationController.GetMutationScaler(e)
 	}
 
 	targetSize := e.Config.PopulationSize - len(newPop)
@@ -47,36 +47,10 @@ func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], d
 	if e.Config.DisableParallelReproduction || limit <= 1 || targetSize <= 2 {
 		// Sequential pathway fallback
 		for len(newPop) < e.Config.PopulationSize {
-			p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
-			p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
-
-			cross := e.selectCrossoverer()
-			mut1 := e.selectMutator()
-			mut2 := e.selectMutator()
-
-			off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
-
-			ageScaler := 1.0
-			if e.Config.AgeBiasedMutation {
-				maxAge := p1.Age
-				if p2.Age > maxAge {
-					maxAge = p2.Age
-				}
-				if maxAge >= e.Config.AgeMutationThreshold {
-					ageScaler = e.Config.AgeMutationScaler
-				}
-			}
-
-			totalScaler := globalScaler * ageScaler
-			mut1Scaled := e.scaleMutator(mut1, totalScaler)
-			mut2Scaled := e.scaleMutator(mut2, totalScaler)
-
-			off1G = mut1Scaled.Mutate(off1G)
-			off2G = mut2Scaled.Mutate(off2G)
-
-			newPop = append(newPop, NewIndividual[Env, State](off1G))
+			off1, off2 := breed(e, current, globalScaler)
+			newPop = append(newPop, off1)
 			if len(newPop) < e.Config.PopulationSize {
-				newPop = append(newPop, NewIndividual[Env, State](off2G))
+				newPop = append(newPop, off2)
 			}
 		}
 		return newPop, nil
@@ -111,36 +85,10 @@ func (s *StandardGeneration[Env, State]) NextGeneration(e *Engine[Env, State], d
 			localOffspring := make(Population[Env, State], 0, chunkSize)
 
 			for len(localOffspring) < chunkSize {
-				p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
-				p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
-
-				cross := e.selectCrossoverer()
-				mut1 := e.selectMutator()
-				mut2 := e.selectMutator()
-
-				off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
-
-				ageScaler := 1.0
-				if e.Config.AgeBiasedMutation {
-					maxAge := p1.Age
-					if p2.Age > maxAge {
-						maxAge = p2.Age
-					}
-					if maxAge >= e.Config.AgeMutationThreshold {
-						ageScaler = e.Config.AgeMutationScaler
-					}
-				}
-
-				totalScaler := globalScaler * ageScaler
-				mut1Scaled := e.scaleMutator(mut1, totalScaler)
-				mut2Scaled := e.scaleMutator(mut2, totalScaler)
-
-				off1G = mut1Scaled.Mutate(off1G)
-				off2G = mut2Scaled.Mutate(off2G)
-
-				localOffspring = append(localOffspring, NewIndividual[Env, State](off1G))
+				off1, off2 := breed(e, current, globalScaler)
+				localOffspring = append(localOffspring, off1)
 				if len(localOffspring) < chunkSize {
-					localOffspring = append(localOffspring, NewIndividual[Env, State](off2G))
+					localOffspring = append(localOffspring, off2)
 				}
 			}
 
@@ -172,9 +120,8 @@ func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def 
 	}
 
 	globalScaler := 1.0
-	if e.Config.AdaptiveMutation {
-		diversity := e.genotypicDiversity()
-		globalScaler = 1.0 + (1.0-diversity)*(e.Config.MaxMutationScaler-1.0)
+	if e.Config.AdaptiveMutation && e.Config.MutationController != nil {
+		globalScaler = e.Config.MutationController.GetMutationScaler(e)
 	}
 
 	// 1. Generate offspring population Q_t of size N using selection, crossover, and mutation
@@ -185,39 +132,11 @@ func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def 
 	if e.Config.DisableParallelReproduction || limit <= 1 || targetSize <= 2 {
 		// Sequential pathway fallback
 		for len(offspring) < len(current) {
-			p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
-			p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
-
-			cross := e.selectCrossoverer()
-			mut1 := e.selectMutator()
-			mut2 := e.selectMutator()
-
-			off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
-
-			ageScaler := 1.0
-			if e.Config.AgeBiasedMutation {
-				maxAge := p1.Age
-				if p2.Age > maxAge {
-					maxAge = p2.Age
-				}
-				if maxAge >= e.Config.AgeMutationThreshold {
-					ageScaler = e.Config.AgeMutationScaler
-				}
-			}
-
-			totalScaler := globalScaler * ageScaler
-			mut1Scaled := e.scaleMutator(mut1, totalScaler)
-			mut2Scaled := e.scaleMutator(mut2, totalScaler)
-
-			off1G = mut1Scaled.Mutate(off1G)
-			off2G = mut2Scaled.Mutate(off2G)
-
-			off1 := NewIndividual[Env, State](off1G)
+			off1, off2 := breed(e, current, globalScaler)
 			off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
 			offspring = append(offspring, off1)
 
 			if len(offspring) < len(current) {
-				off2 := NewIndividual[Env, State](off2G)
 				off2.Fitness = e.Config.FitnessFunc(off2.Genome, e.Config.Env)
 				offspring = append(offspring, off2)
 			}
@@ -251,39 +170,11 @@ func (s *NSGA2Generation[Env, State]) NextGeneration(e *Engine[Env, State], def 
 				localOffspring := make(Population[Env, State], 0, chunkSize)
 
 				for len(localOffspring) < chunkSize {
-					p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
-					p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
-
-					cross := e.selectCrossoverer()
-					mut1 := e.selectMutator()
-					mut2 := e.selectMutator()
-
-					off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
-
-					ageScaler := 1.0
-					if e.Config.AgeBiasedMutation {
-						maxAge := p1.Age
-						if p2.Age > maxAge {
-							maxAge = p2.Age
-						}
-						if maxAge >= e.Config.AgeMutationThreshold {
-							ageScaler = e.Config.AgeMutationScaler
-						}
-					}
-
-					totalScaler := globalScaler * ageScaler
-					mut1Scaled := e.scaleMutator(mut1, totalScaler)
-					mut2Scaled := e.scaleMutator(mut2, totalScaler)
-
-					off1G = mut1Scaled.Mutate(off1G)
-					off2G = mut2Scaled.Mutate(off2G)
-
-					off1 := NewIndividual[Env, State](off1G)
+					off1, off2 := breed(e, current, globalScaler)
 					off1.Fitness = e.Config.FitnessFunc(off1.Genome, e.Config.Env)
 					localOffspring = append(localOffspring, off1)
 
 					if len(localOffspring) < chunkSize {
-						off2 := NewIndividual[Env, State](off2G)
 						off2.Fitness = e.Config.FitnessFunc(off2.Genome, e.Config.Env)
 						localOffspring = append(localOffspring, off2)
 					}
@@ -481,4 +372,107 @@ func calculateCrowdingDistances[Env any, State any](pop Population[Env, State], 
 			}
 		}
 	}
+}
+
+// breed constructs offspring from two selected parents, applying age, adaptive, and self-adaptive mutation bounds.
+func breed[Env any, State any](e *Engine[Env, State], current Population[Env, State], globalScaler float64) (*Individual[Env, State], *Individual[Env, State]) {
+	p1 := e.Config.Selector.Select(current).(*Individual[Env, State])
+	p2 := e.Config.Selector.Select(current).(*Individual[Env, State])
+
+	cross := e.selectCrossoverer()
+	mut1 := e.selectMutator()
+	mut2 := e.selectMutator()
+
+	off1G, off2G := cross.Crossover(p1.Genome, p2.Genome)
+
+	ageScaler := 1.0
+	if e.Config.AgeBiasedMutation {
+		maxAge := p1.Age
+		if p2.Age > maxAge {
+			maxAge = p2.Age
+		}
+		if maxAge >= e.Config.AgeMutationThreshold {
+			ageScaler = e.Config.AgeMutationScaler
+		}
+	}
+
+	// Initialize individual mutation rates if zero
+	if p1.MutationRate == 0 {
+		p1.MutationRate = e.getBaseMutationRate(mut1)
+	}
+	if p2.MutationRate == 0 {
+		p2.MutationRate = e.getBaseMutationRate(mut2)
+	}
+
+	childMutRate1 := 0.5 * (p1.MutationRate + p2.MutationRate)
+	childMutRate2 := childMutRate1
+
+	saCtrl, isSelfAdaptive := e.Config.MutationController.(*SelfAdaptiveController[Env, State])
+	if e.Config.AdaptiveMutation && isSelfAdaptive && saCtrl != nil {
+		factor1 := math.Exp(saCtrl.LearningRate * rand.NormFloat64())
+		childMutRate1 *= factor1
+		if childMutRate1 < saCtrl.MinRate {
+			childMutRate1 = saCtrl.MinRate
+		}
+		if childMutRate1 > saCtrl.MaxRate {
+			childMutRate1 = saCtrl.MaxRate
+		}
+
+		factor2 := math.Exp(saCtrl.LearningRate * rand.NormFloat64())
+		childMutRate2 *= factor2
+		if childMutRate2 < saCtrl.MinRate {
+			childMutRate2 = saCtrl.MinRate
+		}
+		if childMutRate2 > saCtrl.MaxRate {
+			childMutRate2 = saCtrl.MaxRate
+		}
+	}
+
+	baseRate1 := e.getBaseMutationRate(mut1)
+	var saScaler1 float64 = 1.0
+	if isSelfAdaptive && baseRate1 > 0 {
+		saScaler1 = childMutRate1 / baseRate1
+	}
+
+	totalScaler1 := globalScaler * ageScaler * saScaler1
+	mut1Scaled := e.scaleMutator(mut1, totalScaler1)
+
+	baseRate2 := e.getBaseMutationRate(mut2)
+	var saScaler2 float64 = 1.0
+	if isSelfAdaptive && baseRate2 > 0 {
+		saScaler2 = childMutRate2 / baseRate2
+	}
+
+	totalScaler2 := globalScaler * ageScaler * saScaler2
+	mut2Scaled := e.scaleMutator(mut2, totalScaler2)
+
+	off1G = mut1Scaled.Mutate(off1G)
+	off2G = mut2Scaled.Mutate(off2G)
+
+	off1 := NewIndividual[Env, State](off1G)
+	off1.MutationRate = childMutRate1
+
+	off2 := NewIndividual[Env, State](off2G)
+	off2.MutationRate = childMutRate2
+
+	// Track parent fitnesses
+	bestParentFitness := p1.Fitness
+	if len(p2.Fitness) > 0 && len(bestParentFitness) > 0 {
+		if len(e.Config.ObjectiveDirections) > 0 {
+			offTemp2 := &Individual[Env, State]{Fitness: p2.Fitness}
+			offTemp1 := &Individual[Env, State]{Fitness: p1.Fitness}
+			if dominates(offTemp2, offTemp1, e.Config.ObjectiveDirections) {
+				bestParentFitness = p2.Fitness
+			}
+		} else if p2.Fitness[0] > p1.Fitness[0] {
+			bestParentFitness = p2.Fitness
+		}
+	}
+
+	if len(bestParentFitness) > 0 {
+		off1.ParentFitness = bestParentFitness
+		off2.ParentFitness = bestParentFitness
+	}
+
+	return off1, off2
 }

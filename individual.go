@@ -14,6 +14,8 @@ type Individual[Env any, State any] struct {
 	Age              int
 	Rank             int
 	CrowdingDistance float64
+	MutationRate     float64   // Individual-specific mutation rate (self-adaptation)
+	ParentFitness    []float64 // Fitness slice of the best parent for tracking success
 }
 
 // NewIndividual creates a new individual with the given genome.

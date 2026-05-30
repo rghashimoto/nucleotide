@@ -91,9 +91,10 @@ type EngineConfig[Env any, State any] struct {
 	Strategy            GenerationStrategy[Env, State]
 
 	// Adaptive Mutation configuration
-	AdaptiveMutation  bool
-	MaxMutationScaler float64
-	OnMutationAdapted func(generation int, diversity float64, currentScaler float64)
+	AdaptiveMutation   bool
+	MaxMutationScaler  float64
+	OnMutationAdapted  func(generation int, diversity float64, currentScaler float64)
+	MutationController AdaptiveMutationController[Env, State]
 
 	// Age-Biased Mutation configuration
 	AgeBiasedMutation    bool
@@ -117,15 +118,17 @@ func (c *EngineConfig[Env, State]) log(format string, args ...interface{}) {
 
 // Engine orchestrates the genetic algorithm process.
 type Engine[Env any, State any] struct {
-	Config             EngineConfig[Env, State]
-	Population         Population[Env, State]
-	Generation         int
-	crossoverIdx       int
-	mutatorIdx         int
-	crossoverWeightSum float64
-	mutatorWeightSum   float64
-	DiversityHistory   []float64
-	mu                 sync.Mutex
+	Config              EngineConfig[Env, State]
+	Population          Population[Env, State]
+	Generation          int
+	crossoverIdx        int
+	mutatorIdx          int
+	crossoverWeightSum  float64
+	mutatorWeightSum    float64
+	DiversityHistory    []float64
+	SuccessfulMutations int
+	TotalMutations      int
+	mu                  sync.Mutex
 }
 
 // NewEngine creates a new evolution engine and performs validation.
@@ -206,6 +209,10 @@ func NewEngine[Env any, State any](config EngineConfig[Env, State]) (*Engine[Env
 	if e.Config.MaxMutationScaler <= 0 {
 		config.log("Info: MaxMutationScaler not set or invalid, defaulting to 3.0")
 		e.Config.MaxMutationScaler = 3.0
+	}
+	if e.Config.AdaptiveMutation && e.Config.MutationController == nil {
+		config.log("Info: AdaptiveMutation enabled with no explicit controller, defaulting to SigmoidDiversityFeedbackController")
+		e.Config.MutationController = NewSigmoidDiversityFeedbackController[Env, State](0.3, 10.0, 0.1, e.Config.MaxMutationScaler)
 	}
 	if e.Config.AgeMutationThreshold <= 0 {
 		config.log("Info: AgeMutationThreshold not set or invalid, defaulting to 5 generations")
@@ -409,28 +416,49 @@ func (e *Engine[Env, State]) evaluate() {
 		for _, ind := range e.Population {
 			ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
 		}
-		return
+	} else {
+		numInds := len(e.Population)
+		jobs := make(chan int, numInds)
+		for i := 0; i < numInds; i++ {
+			jobs <- i
+		}
+		close(jobs)
+
+		var wg sync.WaitGroup
+		for w := 0; w < limit; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for idx := range jobs {
+					ind := e.Population[idx]
+					ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
+				}
+			}()
+		}
+		wg.Wait()
 	}
 
-	numInds := len(e.Population)
-	jobs := make(chan int, numInds)
-	for i := 0; i < numInds; i++ {
-		jobs <- i
-	}
-	close(jobs)
+	// Rechenberg success rule tracking post-evaluation
+	for _, ind := range e.Population {
+		if len(ind.ParentFitness) > 0 && len(ind.Fitness) > 0 {
+			e.TotalMutations++
+			offspringTemp := &Individual[Env, State]{Fitness: ind.Fitness}
+			parentTemp := &Individual[Env, State]{Fitness: ind.ParentFitness}
 
-	var wg sync.WaitGroup
-	for w := 0; w < limit; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				ind := e.Population[idx]
-				ind.Fitness = e.Config.FitnessFunc(ind.Genome, e.Config.Env)
+			isSuccess := false
+			if len(e.Config.ObjectiveDirections) > 0 {
+				isSuccess = dominates(offspringTemp, parentTemp, e.Config.ObjectiveDirections)
+			} else {
+				isSuccess = ind.Fitness[0] > ind.ParentFitness[0]
 			}
-		}()
+
+			if isSuccess {
+				e.SuccessfulMutations++
+			}
+			// Clear parent fitness to prevent double counting in future generations
+			ind.ParentFitness = nil
+		}
 	}
-	wg.Wait()
 }
 
 func (e *Engine[Env, State]) genotypicDiversity() float64 {
@@ -624,4 +652,41 @@ func scaleMutatorReflection(m Mutator, scaler float64) Mutator {
 		return copiedPtr.Elem().Interface().(Mutator)
 	}
 	return m
+}
+
+func (e *Engine[Env, State]) getBaseMutationRate(m Mutator) float64 {
+	switch mut := m.(type) {
+	case CategoricalMutator:
+		return mut.Probability
+	case *CategoricalMutator:
+		return mut.Probability
+	case BitFlipMutator:
+		return mut.Probability
+	case *BitFlipMutator:
+		return mut.Probability
+	case GaussianMutator:
+		return mut.Probability
+	case *GaussianMutator:
+		return mut.Probability
+	case CategoricalCreepMutator:
+		return mut.Probability
+	case *CategoricalCreepMutator:
+		return mut.Probability
+	case DefaultMutator:
+		return mut.Probability
+	case *DefaultMutator:
+		return mut.Probability
+	default:
+		val := reflect.ValueOf(m)
+		if val.Kind() == reflect.Ptr {
+			val = val.Elem()
+		}
+		if val.Kind() == reflect.Struct {
+			probField := val.FieldByName("Probability")
+			if probField.IsValid() && probField.Kind() == reflect.Float64 {
+				return probField.Float()
+			}
+		}
+	}
+	return 0.05
 }
